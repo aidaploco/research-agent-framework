@@ -201,14 +201,14 @@ def figure_problem(claim_text: str, haystack: str) -> str | None:
         wanted = keyword_map(local) or claim_all
         found = [g for g in source_figures if fig.matches(g)]
         if not found:
-            problems.append(f"figure {fig.text.strip()!r} does not appear in the cited sources")
+            problems.append(f"figure {fig.text.strip()!r} does not appear in the sources")
             continue
         if not wanted or fig.is_year():
             continue  # nothing to anchor on, or a year: presence in the sources is enough
         near = any(set(wanted) & keywords(source_context(haystack, g)) for g in found)
         if not near:
             problems.append(
-                f"figure {fig.text.strip()!r} appears in the cited sources but not near "
+                f"figure {fig.text.strip()!r} appears in the sources but not near "
                 f"any of its context words {sorted(wanted.values())[:6]}"
             )
     return "; ".join(problems) or None

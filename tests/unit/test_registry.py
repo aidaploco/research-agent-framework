@@ -36,11 +36,11 @@ def test_describe_lists_tools_and_options():
     assert "option flag (bool): a flag" in text
 
 
-def test_default_registry_has_wikipedia_and_arxiv():
-    assert default_registry().names() == ["wikipedia", "arxiv"]
+def test_default_registry_has_wikipedia_arxiv_and_fred():
+    assert default_registry().names() == ["wikipedia", "arxiv", "fred"]
 
 
 def test_each_tool_declares_a_distinct_id_prefix():
     reg = default_registry()
     prefixes = [reg.get(n).id_prefix for n in reg.names()]
-    assert prefixes == ["W", "A"]
+    assert prefixes == ["W", "A", "F"]

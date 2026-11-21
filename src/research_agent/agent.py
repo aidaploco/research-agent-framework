@@ -76,6 +76,17 @@ def _call(
     return sources, error, added
 
 
+LIVE_CLAUSE = (
+    "No current figure from {tool} is available, so none is stated here; anything below from "
+    "other sources is general background that may be out of date."
+)
+
+
+def _live_clause(registry: Registry, failed: dict[str, str]) -> str:
+    """For a failed tool that returns current figures: say that no current figure exists."""
+    return " ".join(LIVE_CLAUSE.format(tool=n) for n in failed if registry.get(n).live_data)
+
+
 @dataclass
 class StepOutcome:
     """What one search step did."""
@@ -114,14 +125,16 @@ def run_step(
         down = "; ".join(f"{n}: {why}" for n, why in failures.items())
         text = (
             f"The planned tool ({plan.tool}) was unavailable ({down}). The sources below come "
-            f"from {name} instead, which may not cover what {plan.tool} would have."
-        )
+            f"from {name} instead, which may not cover what {plan.tool} would have. "
+            f"{_live_clause(registry, failures)}"
+        ).strip()
         return StepOutcome(name, "ok", new_ids, failures, text)
     down = "; ".join(f"{n}: {why}" for n, why in failures.items())
     if len(failures) == 1:
         text = f"The {plan.tool} tool was unavailable ({down.split(': ', 1)[1]})."
     else:
         text = f"No sources could be retrieved ({down})."
+    text = f"{text} {_live_clause(registry, failures)}".strip()
     return StepOutcome(plan.tool, "error", [], failures, text)
 
 

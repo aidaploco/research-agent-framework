@@ -187,3 +187,76 @@ def test_render_partial_answer_shows_the_claims_and_the_gap():
     assert "- In 2008 the Fed cut rates. [W1]" in out
     assert "## Gaps\nThe sources do not cover the Fed's COVID-19 response." in out
     assert "## Cannot answer from sources" not in out
+
+
+# ---- the model's own words are held to the figure check ------------------------------
+
+
+def fred_store():
+    store = EvidenceStore()
+    store.add(
+        "F",
+        [
+            Source(
+                tool="fred",
+                title="FRED: Unemployment Rate (UNRATE)",
+                url="https://fred.stlouisfed.org/series/UNRATE",
+                text="Unemployment Rate on 2026-10-01: 4.1 (Percent).\n"
+                "Change over the past 1 year in Unemployment Rate: -0.3 percentage points.",
+                native_id="UNRATE",
+            )
+        ],
+    )
+    return store
+
+
+def test_an_inference_with_a_figure_from_memory_is_shown_as_unverified_not_as_inference():
+    result = classify(
+        answer(
+            ("The unemployment rate was 4.1% in the latest observation.", ["F1"]),
+            inferences=["The unemployment rate is around 3.9% these days."],
+        ),
+        fred_store(),
+    )
+    assert [c.evidence_ids for c in result.sourced] == [["F1"]]
+    assert result.inferences == []  # not presented as the model's reasoning
+    assert result.unverified[0].text == "The unemployment rate is around 3.9% these days."
+    assert "the model's own inference" in result.unverified[0].reason
+    assert "3.9" in result.unverified[0].reason
+
+
+def test_an_inference_with_a_figure_that_is_in_a_source_is_kept():
+    result = classify(
+        answer(inferences=["Unemployment fell by 0.3 percentage points over the year."]),
+        fred_store(),
+    )
+    assert result.inferences == ["Unemployment fell by 0.3 percentage points over the year."]
+    assert result.unverified == []
+
+
+def test_a_caveat_with_an_unsupported_figure_is_demoted_too():
+    result = classify(answer(caveats=["Historically the rate has averaged 5.7%."]), fred_store())
+    assert result.caveats == [] and "the model's own caveat" in result.unverified[0].reason
+
+
+def test_inferences_without_figures_are_untouched():
+    result = classify(
+        answer(inferences=["Labour markets look resilient."], caveats=["One series only."]),
+        fred_store(),
+    )
+    assert result.inferences == ["Labour markets look resilient."] and result.caveats == [
+        "One series only."
+    ]
+
+
+def test_a_refusal_explanation_with_an_unsupported_figure_is_replaced_and_kept_visible():
+    result = classify(answer(refusal="No data; the rate was 3.5% last I knew."), fred_store())
+    assert result.refusal_reason == "The sources do not answer the question."
+    assert "3.5" in result.unverified[0].text
+
+
+def test_the_demoted_inference_is_rendered_under_unverified():
+    result = classify(answer(inferences=["The rate is about 3.9%."]), fred_store())
+    out = render(result, fred_store())
+    assert "## Unverified" in out and "The rate is about 3.9%." in out
+    assert "## Model inference" not in out

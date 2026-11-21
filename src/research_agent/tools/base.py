@@ -42,6 +42,9 @@ class Tool(ABC):
     id_prefix: str  # evidence IDs are this prefix plus a number: W1, A2, ...
     description: str  # shown to the planner: what this tool is good for
     options_model: type[BaseModel] = NoOptions  # validates and documents run() options
+    # True for tools that return current figures. If one is unavailable, the answer must say no
+    # current figure is available, and must not fill the gap from the model's memory.
+    live_data: bool = False
 
     @abstractmethod
     def run(self, query: str, **options) -> list[Source]:

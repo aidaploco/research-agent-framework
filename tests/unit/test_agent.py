@@ -308,3 +308,58 @@ def test_every_tool_down_is_reported_and_answered_honestly(fake_llm, trace_dir):
     )  # fmt: skip
     assert "No sources could be retrieved (arxiv: arxiv down; wikipedia: wikipedia down)." in out
     assert "## Sources\n(none)" in out and trace.outcome == "refused"
+
+
+# ---- tools that return current figures (FRED) ----------------------------------------
+
+
+def fred_tool(*results, **kw):
+    t = FakeTool(*results, name="fred", id_prefix="F", **kw)
+    t.live_data = True
+    return t
+
+
+def test_a_failed_live_data_tool_says_no_current_figure_is_available(fake_llm, trace_dir):
+    out, trace = run(
+        fake_llm, trace_dir,
+        [fred_tool(ToolError("FRED_API_KEY is not set, so live economic data cannot be retrieved")), wiki([page(1)])],
+        plan_json("fred", "UNRATE"),
+        plan_json("wikipedia", "Unemployment rate"),
+        finish_json(),
+        answer_json(("The rate is measured by a survey.", ["W1"])),
+    )  # fmt: skip
+    assert out.startswith("## Notices")
+    assert "The fred tool was unavailable (FRED_API_KEY is not set" in out
+    assert "No current figure from fred is available, so none is stated here" in out
+    assert "general background that may be out of date" in out
+    assert "- The rate is measured by a survey. [W1]" in out  # the background is still given
+
+
+def test_the_model_is_told_too_so_it_can_say_so(fake_llm, trace_dir):
+    run(
+        fake_llm, trace_dir, [fred_tool(ToolError("no key")), wiki([page(1)])],
+        plan_json("fred", "UNRATE"), answer_json(refusal="No live data."),
+        max_steps=1,
+    )  # fmt: skip
+    assert "No current figure from fred is available" in fake_llm.last_user_message
+
+
+def test_the_notice_is_added_when_a_live_tool_is_the_one_falling_back(fake_llm, trace_dir):
+    out, _ = run(
+        fake_llm, trace_dir, [fred_tool(ToolError("no key")), wiki([page(1)])],
+        plan_json("fred", "UNRATE"),
+        answer_json(("Background.", ["W1"])),
+        max_steps=1,
+    )  # fmt: skip
+    assert (
+        "come from wikipedia instead" in out and "No current figure from fred is available" in out
+    )
+
+
+def test_an_ordinary_tool_failure_gets_no_live_data_clause(fake_llm, trace_dir):
+    out, _ = run(
+        fake_llm, trace_dir, [arxiv(ToolError("down")), wiki([page(1)])],
+        plan_json("arxiv", "x"), finish_json(), answer_json(refusal="x"),
+        max_steps=1,
+    )  # fmt: skip
+    assert "No current figure" not in out
