@@ -95,7 +95,11 @@ def test_save_load_roundtrip_keeps_every_step_type(store):
     store.save(trace)
     loaded = store.load(trace.run_id)
     assert loaded == trace
-    assert [type(s) for s in loaded.steps] == [PlanStep, ToolStep, SynthesisStep]
+    assert [type(s) for s in loaded.steps] == [
+        PlanStep,
+        ToolStep,
+        SynthesisStep,
+    ]  # all three kinds survive
     assert loaded.steps[1].sources[0].evidence_id == "W1"
 
 
@@ -108,11 +112,12 @@ def test_json_file_is_plain_readable_json(store):
 def test_index_is_queryable_and_summarizes_the_run(store):
     store.save(sample_trace())
     cols, rows = store.query(
-        "SELECT outcome, planned_tool, tools_used, n_sources, n_sourced, n_unverified, n_repairs, fallback FROM runs"
+        "SELECT outcome, mode, tools_used, n_plan_steps, n_tool_calls, n_skipped, n_sources, "
+        "n_sourced, n_unverified, n_repairs, fallback FROM runs"
     )
-    assert rows == [("answered", "wikipedia", "wikipedia", 1, 1, 1, 1, 0)]
+    assert rows == [("answered", "multi-step", "wikipedia", 1, 1, 0, 0, 1, 1, 1, 0)]
     _, steps = store.query("SELECT type, status FROM steps ORDER BY idx")
-    assert steps == [("plan", "ok"), ("tool", "ok"), ("synthesis", "repaired")]
+    assert steps == [("plan", "search/ok"), ("tool", "ok"), ("synthesis", "repaired")]
     _, calls = store.query("SELECT purpose, problem FROM llm_calls WHERE problem IS NOT NULL")
     assert calls == [("plan", "bad id")]
 
@@ -241,7 +246,7 @@ def test_planner_fallback_to_default_is_flagged(fake_llm, store):
     plan = store.load("latest").steps[0]
     assert plan.fell_back_to_default and "defaulting" in plan.reasoning
     assert len(plan.llm_attempts) == 2 and plan.llm_attempts[0].problem
-    assert store.query("SELECT status FROM steps WHERE type='plan'")[1] == [("default",)]
+    assert store.query("SELECT status FROM steps WHERE type='plan'")[1] == [("search/default",)]
 
 
 def test_a_crash_mid_run_still_leaves_a_trace_with_the_steps_so_far(fake_llm, store, planned):
@@ -265,3 +270,73 @@ def test_each_run_gets_its_own_trace_file(fake_llm, store, planned):
     assert (
         Trace.model_validate_json(sorted(store.dir.glob("*.json"))[0].read_text()).question == "one"
     )
+
+
+# ---- the index survives schema changes and errors ------------------------------------
+
+
+def test_an_index_from_an_older_schema_is_rebuilt_from_the_json_files(store):
+    store.save(sample_trace())
+    with sqlite3.connect(store.index_path) as db:  # simulate the schema of an earlier version
+        db.executescript("DROP TABLE runs; CREATE TABLE runs (run_id TEXT); PRAGMA user_version=1;")
+    cols, rows = store.query("SELECT mode, n_plan_steps FROM runs")  # would fail on the old schema
+    assert rows == [("multi-step", 1)]
+
+
+def test_a_corrupt_index_file_is_rebuilt(store):
+    store.save(sample_trace())
+    store.index_path.write_bytes(b"this is not a sqlite database")
+    assert store.query("SELECT count(*) FROM runs")[1] == [(1,)]
+
+
+def test_index_summarizes_a_multi_step_run(store):
+    run = tracing.Run("q", model="m")
+    run.trace.max_steps, run.trace.stop_reason = 3, "finish"
+    for tool in ("wikipedia", "arxiv"):
+        run.add(PlanStep(tools_offered="-", reasoning="r", tool=tool, query="q"))
+        run.add(ToolStep(tool=tool, query="q", status="ok", new_sources=2))
+    run.add(
+        PlanStep(tools_offered="-", action="search", reasoning="again", tool="arxiv", query="q")
+    )
+    run.add(ToolStep(tool="arxiv", query="q", status="skipped", error="repeat"))
+    run.add(PlanStep(tools_offered="-", action="finish", reasoning="enough", tool=""))
+    run.finish("answered", "a")
+    store.save(run.trace)
+    _, rows = store.query(
+        "SELECT n_plan_steps, n_tool_calls, n_skipped, n_sources, tools_used, stop_reason FROM runs"
+    )
+    assert rows == [(4, 2, 1, 4, "wikipedia,arxiv", "finish")]
+
+
+def test_token_usage_and_waits_are_summed_into_the_index(store):
+    run = tracing.Run("q", model="m")
+    call = attempt(prompt_tokens=100, completion_tokens=20, waited_ms=1500)
+    run.add(PlanStep(tools_offered="-", reasoning="r", tool="w", query="q", llm_attempts=[call]))
+    run.add(SynthesisStep(llm_attempts=[attempt(prompt_tokens=300, completion_tokens=50)]))
+    run.finish("answered", "a")
+    store.save(run.trace)
+    assert store.query("SELECT prompt_tokens, completion_tokens, wait_ms FROM runs")[1] == [
+        (400, 70, 1500)
+    ]
+
+
+def test_an_index_error_never_loses_the_json_record(store, monkeypatch, capsys):
+    def broken(self, trace):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(TraceStore, "index", broken)
+    trace = sample_trace()
+    path = store.save(trace)
+    assert path.exists() and "index not updated" in capsys.readouterr().err
+
+
+def test_a_sqlite_error_while_saving_does_not_replace_the_answer(trace_dir, monkeypatch, capsys):
+    store = TraceStore(trace_dir)
+
+    def broken(self, trace):
+        raise sqlite3.DatabaseError("malformed")
+
+    monkeypatch.setattr(TraceStore, "save", broken)
+    with tracing.start_run("q", store) as run:
+        run.finish("answered", "the answer")
+    assert "could not save" in capsys.readouterr().err  # reported, not raised

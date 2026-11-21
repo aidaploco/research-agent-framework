@@ -23,20 +23,21 @@ def _call(tool: Tool, plan: Plan, role: str, store: EvidenceStore) -> list[Sourc
         sources, error = [], str(e)
         print(f"[tool error] {e}", file=sys.stderr)
     records: list[SourceRecord] = []
-    if sources:
-        ids = store.add(tool.id_prefix, sources)
-        records = [
+    added = store.add(tool.id_prefix, sources) if sources else None
+    for eid in added.ids if added else []:
+        stored = store.get(eid)  # the text as stored: trimmed to the evidence budget
+        assert stored is not None
+        records.append(
             SourceRecord(
                 evidence_id=eid,
-                tool=s.tool,
-                title=s.title,
-                url=s.url,
-                native_id=s.native_id,
-                published=str(s.meta.get("published", "")),
-                text=s.text,
+                tool=stored.tool,
+                title=stored.title,
+                url=stored.url,
+                native_id=stored.native_id,
+                published=str(stored.meta.get("published", "")),
+                text=stored.text,
             )
-            for eid, s in zip(ids, sources, strict=True)
-        ]
+        )
     tracing.add_step(
         ToolStep(
             duration_ms=int((time.monotonic() - started) * 1000),
@@ -47,6 +48,9 @@ def _call(tool: Tool, plan: Plan, role: str, store: EvidenceStore) -> list[Sourc
             status="error" if error else ("ok" if sources else "empty"),
             error=error,
             sources=records,
+            new_sources=len(added.new_ids) if added else 0,
+            dropped_for_budget=added.dropped if added else 0,
+            trimmed_for_budget=added.trimmed if added else 0,
         )
     )
     return ToolError(error) if error else sources
