@@ -250,9 +250,17 @@ def render(result: Synthesis, store: EvidenceStore) -> str:
         out.append("\n## Model inference / caveats")
         out += [f"- Inference: {t}" for t in result.inferences]
         out += [f"- Caveat: {t}" for t in result.caveats]
+    # Cited sources first. Sources the run retrieved but no claim relies on are listed apart, so
+    # a reader cannot mistake an unrelated search hit for support.
+    cited = {eid for c in result.sourced for eid in c.evidence_ids}
     out.append("\n## Sources")
-    if len(store):
-        out += [f"[{eid}] {s.citation()}" for eid, s in store.items()]
+    shown = [(eid, src) for eid, src in store.items() if eid in cited]
+    if shown:
+        out += [f"[{eid}] {src.citation()}" for eid, src in shown]
     else:
-        out.append("(none)")
+        out.append("(none cited)" if len(store) else "(none)")
+    rest = [(eid, src) for eid, src in store.items() if eid not in cited]
+    if rest:
+        out.append("\n## Retrieved but not cited (not used as support above)")
+        out += [f"[{eid}] {src.citation()}" for eid, src in rest]
     return "\n".join(out)
