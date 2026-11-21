@@ -4,8 +4,9 @@ A research agent for a banking team. It takes a natural-language question, plans
 tool to use, searches (Wikipedia, arXiv), and prints an answer in which every sourced
 claim carries a checked citation. It runs on free tiers only: no paid API keys.
 
-> **Status: work in progress** (milestone M3 of [PLAN.md](PLAN.md)). Sections marked
-> *TBD* are filled in as milestones land. This README is updated with each milestone.
+> **Status: work in progress.** Milestones M0 to M4 are merged (see [PLAN.md](PLAN.md));
+> the multi-step loop, FRED, the 8 reference runs and the evaluation harness are next.
+> Sections marked *TBD* are filled in as those land. This README is updated with each milestone.
 
 ## Setup and run
 
@@ -22,8 +23,16 @@ Get a free Groq key at <https://console.groq.com>. No payment details are needed
 A FRED key (optional, for live economic data in a later milestone) is free at
 <https://fred.stlouisfed.org/docs/api/api_key.html>.
 
-The plan the agent chose is printed to stderr (`[plan] ...`); add `2>/dev/null` to see
-only the answer.
+The plan the agent chose is printed to stderr (`[plan] ...`) and so is the path of the run's
+trace (`[trace] ...`); add `2>/dev/null` to see only the answer.
+
+Every run writes a trace. To read the last one:
+
+```sh
+uv run python -m research_agent.trace_cli show latest      # the run as a narrative
+uv run python -m research_agent.trace_cli list             # recent runs
+uv run python -m research_agent.trace_cli sql "SELECT type, tool, status, duration_ms FROM steps"
+```
 
 Development:
 
@@ -36,10 +45,106 @@ The unit tests never touch the network: an autouse fixture fails any test that o
 socket, and they use shared fakes (`tests/fakes.py`): a scripted fake LLM, fake tools, and
 recorded HTTP responses. Live calls belong to the evaluation runs, not the unit tests.
 
+## Using the agent
+
+### Ask a question
+
+```sh
+uv run python main.py "What are the Basel III capital requirements for banks?"
+```
+
+Put the question in quotes. The agent works out which source suits it:
+
+| Kind of question | Where it goes | Example |
+|---|---|---|
+| Definitions, how a mechanism works, history | Wikipedia | *What is the Federal Reserve's discount window and how does it work?* |
+| Research literature, "recent papers" | arXiv | *What recent academic research exists on using machine learning for credit risk assessment?* |
+| Nothing it can help with | refused, with no search and no model call | *What is the best restaurant in New York City?* |
+
+Today a question gets **one** tool call. A question that needs two sources (for example *"explain
+yield curve inversions and find recent papers"*) is answered from whichever tool the planner
+picks; the multi-step loop that fixes this is the next milestone. There is no FRED tool yet, so
+questions about current economic data cannot be answered from live data.
+
+### Read the answer
+
+The answer goes to stdout; the plan and the trace path go to stderr. An abridged answer:
+
+```
+## From sources
+- Basel III requires banks to have a minimum Common Equity Tier 1 (CET1) ratio of 4.5% of risk-weighted assets. [W1]
+- Basel III introduced a minimum leverage ratio of 3%, calculated as Tier 1 capital divided by total leverage exposure. [W1]
+
+## Model inference / caveats
+- Inference: The framework combines quality, quantity, buffers, leverage limits and liquidity standards.
+- Caveat: The sources do not list updates to the standards after the initial publication.
+
+## Sources
+[W1] Basel III - https://en.wikipedia.org/wiki/Basel_III
+[W2] Basel Committee on Banking Supervision - https://en.wikipedia.org/wiki/Basel_Committee_on_Banking_Supervision
+```
+
+- **From sources:** statements taken from the retrieved sources. Each carries citation markers
+  (`[W1]`, `[A2]`: the letter is the tool, Wikipedia or arXiv, and the number is the source),
+  written by code after it checked the source exists and that every figure in the statement is
+  in it. The *Sources* list at the bottom gives title, ID and URL so you can open each one.
+- **Model inference / caveats:** what the model adds itself. Treat these as reasoning, not as
+  retrieved fact.
+- **Unverified** (only when present): statements the model made that failed the checks, kept
+  visible and labelled with the reason, never silently dropped. Do not rely on them.
+- **Notices** (only when present): written by code, for example that a tool was unavailable
+  and another one answered in its place.
+- **Cannot answer from sources:** the sources did not answer the question, or it was out of
+  scope. The agent says so instead of guessing.
+
+### Look at what the agent did
+
+Each run is traced; `uv run python -m research_agent.trace_cli show latest` explains every
+decision (see *Observability* below).
+
+### Configuration
+
+Set these in `.env` (copy `.env.example`) or in the environment.
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `GROQ_API_KEY` | yes | Free key from <https://console.groq.com>. |
+| `LLM_MODEL` | no | Groq model id; default `openai/gpt-oss-120b`. Only the default has been tested. The model must support JSON-schema output. |
+| `TRACE_DIR` | no | Where traces and the index are written; default `.traces`. |
+| `FRED_API_KEY` | no | Reserved for the FRED tool in a later milestone; not used yet. |
+
+### Troubleshooting
+
+- **`error: GROQ_API_KEY is not set`:** create `.env` from `.env.example` and add your key.
+- **`error: Groq API error 429`:** the free tier's rate limit (about 8,000 tokens per minute for
+  the default model). The client already retries with the `Retry-After` the API gives; wait a
+  minute and run again. Running several questions back to back can trigger it.
+- **A "Notices" section says arXiv was unavailable:** arXiv rate-limits and sometimes times
+  out. The agent retried three times with short backoff, then tried Wikipedia; the notice says
+  which sources the answer used. Run it again later for paper results.
+- **"Cannot answer from sources":** the retrieved articles did not contain the answer. Try
+  rewording with the topic's proper name (for example "Basel III", not "bank capital rules").
+  `trace_cli show latest` shows what was searched and retrieved.
+- **A slow run:** most of the time is the model and the network. arXiv adds up to about 40
+  seconds when it is rate-limiting.
+
+### Add a tool
+
+1. Write a class in `src/research_agent/tools/` that subclasses `Tool`: set `name`, a one-letter
+   `id_prefix`, a one-line `description` (the planner chooses tools by reading it), and, if it
+   takes options, an `options_model` (a Pydantic model with a `Field(description=...)` per
+   option). Implement `run(query, **options) -> list[Source]`, raising `ToolError` on failure.
+2. Register it in `default_registry()` in `tools/registry.py`.
+3. Test it with `FakeHTTPResponse` and `FakeTool` from `tests/fakes.py`.
+
+Nothing else changes: the planner prompt is generated from the registry, evidence IDs and
+citations come from the prefix, and failures flow through the same retry, fallback and notice
+path. (IDs stay unique even if two tools share a prefix; distinct letters just read better.)
+
 ## Architecture overview
 
 ```
-main.py                      CLI entry point
+main.py                      CLI entry point (clean error messages, exit code 1 on failure)
 src/research_agent/
   agent.py                   plan -> run one tool -> synthesize -> render
   planner.py                 LLM picks a tool + query (Pydantic Plan)
@@ -47,6 +152,8 @@ src/research_agent/
   grounding.py               checks that figures in a claim are in the cited sources
   evidence.py                evidence IDs (W1, A2, ...) for every retrieved source
   llm.py                     Groq client + structured() for schema-validated output
+  tracing.py                 trace models, the run recorder, JSON + SQLite storage
+  trace_cli.py               list / show / sql / reindex for traces
   tools/
     base.py                  Tool interface, Source model, options models
     registry.py              the one place tools are registered and described
@@ -94,6 +201,55 @@ substitutions), *From sources* (validated claims with citations),
 **Orchestration pattern.** *TBD (M5).* The intended pattern is a ReAct-style loop with
 state, so the agent can refine searches and avoid repeating calls. Today it is a single
 plan-then-synthesize pass.
+
+## Observability: traces
+
+Every run produces a structured trace, saved even when the run crashes. The trace is a
+Pydantic model written as one JSON file per run in `.traces/` (override with `TRACE_DIR`),
+which is the record, plus a SQLite index (`.traces/index.db`) for queries. It records, in
+order:
+
+| Step | What it holds |
+|---|---|
+| **plan** | the tools offered, the model's stated reasoning, the tool, query and options chosen, whether the model's output never validated and a default tool was used, and every model call exactly as sent and received (including replies that were rejected) |
+| **tool** | the tool called, whether it was the planned tool or a fallback, its input, status (`ok`, `empty`, `error`), the error text, and the raw sources it returned with the evidence IDs they were given |
+| **synthesis** | which evidence IDs the model could cite, every model call and the validation problem that caused a retry, and the result: each claim as sourced or unverified (with the reason), inferences, caveats and any refusal |
+
+The trace also holds the question, the model name, timing per step, the outcome (`answered`,
+`refused`, `out_of_scope` or `error`), the notices, and the final answer text. A reviewer can
+follow a decision from the offered tools, to the reasoning, to the retrieved evidence, to the
+claims that survived validation. `trace_cli show` prints exactly that as a narrative:
+
+```
+Step 1  PLAN (458 ms)
+  chose: wikipedia  query='Basel III'
+  why: Wikipedia provides a concise overview of Basel III capital requirements.
+    model call 1 (openai/gpt-oss-120b, 457 ms): accepted
+Step 2  TOOL wikipedia [planned] (2565 ms)  query='Basel III'
+  result: 2 sources
+    [W1] Basel III  (8000 chars)  https://en.wikipedia.org/wiki/Basel_III
+    [W2] Basel Committee on Banking Supervision  (3000 chars)  https://en.wikipedia.org/wiki/...
+Step 3  SYNTHESIS (2221 ms)  may cite: W1, W2
+  7 sourced, 0 unverified
+    sourced [W1]: Basel III requires banks to have a minimum Common Equity Tier 1 (CET1) ratio ...
+```
+
+The SQLite index has three tables (`runs`, `steps`, `llm_calls`), so questions like "how often
+did the planner's output need a repair?" or "which runs fell back to another tool?" are one
+`SELECT` away (`trace_cli sql` accepts read-only queries only). The index can always be rebuilt
+from the JSON files with `trace_cli reindex`.
+
+Notes on what a trace is and is not:
+
+- **"Reasoning" is the model's stated one-sentence reason** in its plan, not hidden
+  chain-of-thought. The exact prompts and replies are recorded, so the decision can be
+  checked against what the model was shown.
+- **"Raw tool output" is the list of sources as the tool returned it** after the tool's own
+  truncation (for example 8,000 characters of the top Wikipedia article), not the raw HTTP
+  response.
+- Traces include full prompts and retrieved text, so they can be large. They stay local
+  (`.traces/` is gitignored); sample traces for the reference questions are committed with
+  their outputs in a later milestone. Token usage is not recorded yet.
 
 ## Key design decisions and tradeoffs
 
@@ -251,7 +407,9 @@ Known at this milestone:
 - arXiv is slow and sometimes unavailable. The fallback tool may not be a good substitute
   (Wikipedia is not a substitute for papers); the notice says so, but the answer is weaker.
 - No FRED tool yet, so current economic data can't be retrieved.
-- No tracing or evaluation yet.
+- Traces do not record token usage yet, and the retries inside the tools (arXiv and Wikipedia
+  backoff) are not separate trace steps: only the final outcome of each tool call is.
+- No evaluation harness yet.
 
 ## What I would do differently with more time
 

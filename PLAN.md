@@ -154,7 +154,7 @@ Each milestone ends runnable and committed. Closed checklist IDs are listed.
   - "From sources" and "Model inference" sections.
   - Scope check for Q7.
   - Closes: A7, A8, A9, Q7 behaviour.
-- **M4 — Tracing.**
+- **M4 — Tracing.** *(Implemented on branch `m4-tracing`: Pydantic trace models, JSON files plus a SQLite index, a `trace_cli` to list, show and query.)*
   - Structured trace per run: step, tool, input, raw output, reasoning and final synthesis. Stored as JSON, with a SQLite index.
   - A small script to query or pretty-print a trace.
   - Closes: O1–O4.

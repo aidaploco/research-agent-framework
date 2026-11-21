@@ -779,3 +779,108 @@ Do you want me to push the branch and open a PR for M3?
 ## [2026-11-20 19:54:34] Prompt
 
 yeah push open and merge. also tell me what's next based on the plan
+
+## [2026-11-20 19:55:41] Response
+
+PR #3 is merged as `e0e6925`. All CI checks passed, including `ci-success`, and local `main` is up to date. I didn't delete `m3-structured-synthesis` or the earlier `m2-tools-planner` branch, because you haven't asked for that.
+
+## What's next, per PLAN.md
+
+**M4 — Tracing** (closes O1–O4). This is the next milestone and the dependency for most of the rest.
+- Every run writes a structured trace. Each step records the tool selected, its input, the raw tool output, the agent's reasoning, and the final synthesis. Failures, fallbacks and retries are steps too.
+- Traces are stored as one JSON file per run, with a SQLite index. A small script pretty-prints or queries them.
+- The Pydantic models in the code already make this straightforward.
+- It's also the ledger the eval harness will read, which is why it comes before the loop.
+
+**M5 — Multi-step loop with state** (closes M1–M3, A6).
+- A ReAct-style loop with a step cap, one tool per step as you chose, and a memory of what's already retrieved, so it avoids repeat calls.
+- It adds a single-pass flag for the before/after comparison the spec requires.
+- This is what Q4 and Q6 need.
+- The rate-limit work I reported on ai-rag-app also lands here:
+  - a shared retry helper
+  - a proactive token budget from Groq's headers
+  - a cap on `Retry-After`
+  - retries and waits recorded in the trace
+- A call for later: with one tool per step, the loop can refine a search after an intermediate result. A "found nothing" result currently triggers neither a fallback nor a retry, and M5 is where that gets fixed.
+
+**M6 — FRED tool** (closes Q5).
+- It uses your fallback rule: with no key, it says live unemployment data can't be retrieved and gives no number. Wikipedia can add background on how the rate is measured, labelled general context that may be out of date.
+- It never states a current rate from model memory. I'd back that with a code check, as the grounding check does.
+- I'll need a FRED key from you to run the keyed path.
+
+**M7 — Run all 8 reference questions.**
+- Save outputs and traces, and compare single-pass against multi-step on at least two questions (Q4 and Q6 are the candidates).
+- Q4, Q5, Q6 and Q8 haven't been run live yet.
+
+**M8 — Evaluation harness** (your Tier 3 choice).
+- 15 or more questions covering factual lookup, multi-source synthesis and out-of-scope.
+- Per question: expected sources, facts that must appear, and facts that must not.
+- Metrics: relevance, source attribution (a deterministic check against the trace, reusing the evidence-ID work) and refusal behavior.
+- Offline evals run in CI. Live evals run on demand, because of Groq's 8,000 tokens/min limit.
+
+**M9 — README and final audit.**
+- It includes the fresh-clone test, "do differently", and a check that `prompt-log.md` is complete.
+
+**M10 — Publish.** The repo is already public and branch-protected, so what's left is a final check that everything is pushed.
+
+## Open items worth knowing
+- Prompt log: the first exchange is reconstructed, and tool calls aren't logged.
+- Python 3.11 compatibility: CI checks it, and it has passed.
+
+I'd start M4 on a new branch. Say the word, or tell me if you'd rather reorder: for example doing M5 first. I'd advise against that, since the loop is much harder to debug without traces.
+
+---
+
+## [2026-11-20 19:56:39] Prompt
+
+delete the two old branches. and do M4 on a new branch
+
+## [2026-11-20 20:00:32] Response
+
+I deleted the two old branches and built M4, tracing. It's committed on `m4-tracing` as two commits, `c9f7a64` for the feature and `9a25c83` for the docs. It isn't pushed, and there's no PR yet. Lint passes and all 117 unit tests pass, stable across repeated runs.
+
+**Branches:** `m2-tools-planner` and `m3-structured-synthesis` are deleted locally and on the remote.
+
+**What a trace holds.** Each run saves one JSON file in `.traces/`, which is the record. It also updates a SQLite index. The steps, in order:
+- **Plan:**
+  - the tools offered
+  - the model's stated reasoning
+  - the tool, query and options chosen
+  - every model call exactly as sent and received, including rejected replies
+  - a flag if the model's output never validated and a default tool was used
+- **Tool:**
+  - the input, the status (`ok`, `empty` or `error`) and the error text
+  - whether it was the planned tool or a fallback (each is its own step)
+  - the raw sources it returned, with their evidence IDs
+- **Synthesis:**
+  - which IDs the model could cite
+  - each validation problem that triggered a retry
+  - every claim as sourced or unverified, with the reason
+- **The run itself:** timings, the outcome, the notices and the final answer.
+
+A crashed run still saves its trace with the error. A failed save never loses the answer.
+
+**Reading traces.** `uv run python -m research_agent.trace_cli` has four commands:
+- `list`: recent runs.
+- `show latest`: the run as a narrative of each decision.
+- `sql "SELECT …"`: queries on the `runs`, `steps` and `llm_calls` tables. Only SELECT is accepted, and my test confirmed a DELETE is rejected.
+- `reindex`: rebuilds the index from the JSON.
+
+I ran the Basel III question live and read its trace with `show latest`.
+
+**A bug I caught.** Two runs started within the same second had IDs differing only by a random suffix, so `latest` could return the wrong run. IDs now include microseconds, so they sort in time order.
+
+**What a trace is and is not.** The README states these limits:
+- "Reasoning" is the model's stated one-sentence reason, not hidden chain-of-thought. The exact prompts and replies are recorded, so you can check it against what the model saw.
+- "Raw tool output" is the sources after each tool's own truncation, not the raw HTTP response.
+- Token usage is not recorded yet.
+- The retries inside the arXiv and Wikipedia tools aren't separate steps; only each call's final outcome is. M5's retry helper is where that gets recorded.
+- Traces are gitignored. Sample traces for the reference questions get committed with the outputs in M7.
+
+Do you want me to push the branch and open a PR for M4?
+
+---
+
+## [2026-11-20 20:03:01] Prompt
+
+make sure the readme is up to date and it explains how to use this. then push, open the pr, and merge. then start M5
