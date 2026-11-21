@@ -415,17 +415,19 @@ body, not a 429, and it occasionally times out; Wikipedia returns 429 under burs
 - **Tradeoff:** during development a single arXiv query once needed about 25 seconds of
   retries to clear a rate limit. Short backoff means more runs give up on arXiv and fall back,
   in exchange for never hanging for minutes.
-- **Fallback:** if the planned tool is still unavailable, the agent tries the other
-  registered tools with the same query (without the planned tool's options). Anything they
-  return is used as evidence.
+- **A failure is shown to the planner:** in a multi-step run the failed tool is marked as failed
+  in the log and not offered again, so the planner can choose another tool or query itself.
+- **Fallback:** only on the *last* allowed step (always, in single-pass mode), when no later step
+  could react, the agent tries the other registered tools with the same query (without the
+  planned tool's options). Anything they return is used as evidence.
 - **Disclosure:** the code, not the model, prints a **Notices** section saying which tool
   was unavailable and why, and, if another tool answered instead, that the sources come from
   that tool and may not cover what the planned one would have. The model is told as well, so
   it can caveat. A substitute that returns nothing is not presented as an answer.
 - **Not done:** circuit breakers, and measuring answer quality under partial failure
   (that is the Tier 3 reliability item; the Tier 3 choice here is the evaluation harness).
-  A tool that works but returns nothing does not trigger a fallback; refining the search is
-  the job of the multi-step loop (M5).
+  A tool that works but returns nothing does not trigger a fallback; in a multi-step run the
+  planner sees "no results" in its log and refines the query.
 
 ## Agent performance summary
 
