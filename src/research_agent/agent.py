@@ -70,6 +70,7 @@ def _call(
             new_sources=len(added.new_ids) if added else 0,
             dropped_for_budget=added.dropped if added else 0,
             trimmed_for_budget=added.trimmed if added else 0,
+            retries=tracing.take_retries(tool.name),
         )
     )
     return sources, error, added

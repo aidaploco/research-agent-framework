@@ -25,6 +25,7 @@ def _attempts(step: PlanStep | SynthesisStep) -> list[str]:
         lines.append(
             f"    model call {n} ({a.model}, {a.duration_ms} ms{cost}{wait}{retry}): {status}"
         )
+        lines += [_wrap(f"retry: {note}", "      ") for note in a.retry_log]
         if a.problem:
             lines.append(_wrap(f"reply was: {a.reply[:300]}", "      "))
     return lines
@@ -72,6 +73,7 @@ def render_trace(t: Trace) -> str:
                 f"Step {s.index}  TOOL {s.tool} [{s.role}] ({s.duration_ms} ms)  query={s.query!r}"
                 + (f" options={s.options}" if s.options else ""),
                 f"  result: {what}{budget}",
+                *[_wrap(f"retry: {note}", "    ") for note in s.retries],
             ]  # fmt: skip
             for src in s.sources:
                 ident = f" {src.native_id}" if src.native_id else ""

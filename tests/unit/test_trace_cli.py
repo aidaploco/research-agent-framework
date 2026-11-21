@@ -120,3 +120,27 @@ def test_show_marks_skipped_steps_and_budget_trimming(fake_llm, trace_dir, capsy
     main(["--dir", str(trace_dir), "show", "latest"])
     out = capsys.readouterr().out
     assert "SKIPPED, not run: repeat of step 1" in out and "stopped because: duplicate" in out
+
+
+def test_show_prints_retries_under_the_tool_and_the_model_call(fake_llm, trace_dir, capsys):
+    from research_agent.tracing import LLMAttempt, PlanStep, Run, ToolStep
+
+    run = Run("q", model="m")
+    run.add(PlanStep(tools_offered="-", reasoning="r", tool="arxiv", query="q", llm_attempts=[
+        LLMAttempt(purpose="plan", model="m", messages=[], reply="{}", waited_ms=3000, retries=1,
+                   retry_log=["attempt 1 of 3 failed (HTTP 429); waiting 3s"])]))  # fmt: skip
+    run.add(
+        ToolStep(
+            tool="arxiv",
+            query="q",
+            status="ok",
+            retries=["attempt 1 of 3 failed (rate limited); waiting 2s"],
+        )
+    )
+    run.finish("answered", "a")
+    TraceStore(trace_dir).save(run.trace)
+    main(["--dir", str(trace_dir), "show", "latest"])
+    out = capsys.readouterr().out
+    assert "retry: attempt 1 of 3 failed (HTTP 429); waiting 3s" in out
+    assert "retry: attempt 1 of 3 failed (rate limited); waiting 2s" in out
+    assert "waited 3000 ms" in out

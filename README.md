@@ -250,7 +250,7 @@ order:
 | Step | What it holds |
 |---|---|
 | **plan** (one per step) | the tools offered, the compact log of earlier steps the model was shown, how many searches were left, the model's stated reasoning, the action (`search`, `finish`, `refuse`) with its tool, query and options, whether the model's output never validated and a default was used, and every model call exactly as sent and received (including replies that were rejected), with its token counts, any wait, and HTTP retries |
-| **tool** | the tool called, whether it was the planned tool or a fallback, its input, status (`ok`, `empty`, `error`, or `skipped` for a repeat or an already-failed tool that the loop refused to run), the error or reason, the sources it returned with the evidence IDs they were given, how many were new, and how many were trimmed or dropped for the evidence budget |
+| **tool** | the tool called, whether it was the planned tool or a fallback, its input, status (`ok`, `empty`, `error`, or `skipped` for a repeat or an already-failed tool that the loop refused to run), the error or reason, the sources it returned with the evidence IDs they were given, how many were new, how many were trimmed or dropped for the evidence budget, and each retry the tool made inside the call |
 | **synthesis** | which evidence IDs the model could cite, every model call and the validation problem that caused a retry, and the result: each claim as sourced or unverified (with the reason), inferences, caveats and any refusal |
 
 The trace also holds the question, the model name, the mode (`single-pass` or `multi-step`) and
@@ -411,7 +411,9 @@ body, not a 429, and it occasionally times out; Wikipedia returns 429 under burs
 
 - **Retry:** each tool makes up to **3 attempts**, with a **10-second timeout** per request
   and a **short backoff** (arXiv 2s then 4s, Wikipedia 1s then 2s). arXiv also spaces
-  requests at least 3 seconds apart. The worst case for arXiv is about 40 seconds.
+  requests at least 3 seconds apart. The worst case for arXiv is about 40 seconds. One helper
+  (`retry.py`) runs the loop for arXiv, Wikipedia and the model client, and notes every failed
+  attempt, with its reason and wait, in the trace (under the tool step or the model call).
 - **Tradeoff:** during development a single arXiv query once needed about 25 seconds of
   retries to clear a rate limit. Short backoff means more runs give up on arXiv and fall back,
   in exchange for never hanging for minutes.
@@ -510,8 +512,6 @@ Known at this milestone:
   (Wikipedia is not a substitute for papers); the notice says so, but the answer is weaker.
 - No FRED tool yet, so current economic data can't be retrieved.
 - Results above are single live runs on one day; the planner and the sources vary from run to run.
-- The retries inside the tools (arXiv and Wikipedia backoff) are not recorded as separate trace
-  steps: only the final outcome of each tool call is. Model-call retries and waits are.
 - No evaluation harness yet.
 
 ## What I would do differently with more time

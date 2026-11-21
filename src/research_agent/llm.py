@@ -12,6 +12,7 @@ import requests
 from pydantic import BaseModel, ValidationError
 
 from . import tracing
+from .retry import RetriesExhausted, Retry, with_retries
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_MODEL = "openai/gpt-oss-120b"
@@ -146,7 +147,8 @@ def chat(messages, model=None, max_tokens=1500, retries=3, response_format=None)
         print(f"[pacing] waiting {wait:.1f}s for the token allowance", file=sys.stderr)
         time.sleep(wait)
         info.waited_ms += int(wait * 1000)
-    for attempt in range(retries):
+
+    def attempt(n: int) -> str:
         r = requests.post(
             GROQ_URL, json=payload, timeout=60, headers={"Authorization": f"Bearer {key}"}
         )
@@ -157,20 +159,25 @@ def chat(messages, model=None, max_tokens=1500, retries=3, response_format=None)
             info.prompt_tokens = int(usage.get("prompt_tokens", 0))
             info.completion_tokens = int(usage.get("completion_tokens", 0))
             return (body["choices"][0]["message"].get("content") or "").strip()
-        if r.status_code in (429, 500, 502, 503) and attempt < retries - 1:
-            wait = _retry_after(r.headers, attempt)
+        if r.status_code in (429, 500, 502, 503) and n < retries - 1:
+            wait = _retry_after(r.headers, n)
             if wait > MAX_RETRY_WAIT:
                 raise LLMError(
                     f"Groq asks to wait {wait:.0f}s, longer than the {MAX_RETRY_WAIT:.0f}s this "
                     "client will wait. A per-minute limit clears sooner; a daily quota means "
                     f"trying again later. Original response: {r.text[:200]}"
                 )
-            time.sleep(wait)
-            info.waited_ms += int(wait * 1000)
-            info.retries += 1
-            continue
+            raise Retry(f"HTTP {r.status_code}", wait=wait)
         raise LLMError(f"Groq API error {r.status_code}: {r.text[:300]}")
-    raise LLMError("Groq API: retries exhausted")
+
+    def waited(reason: str, wait: float) -> None:
+        info.waited_ms += int(wait * 1000)
+        info.retries += 1
+
+    try:
+        return with_retries("llm", attempt, attempts=retries, backoff=(2.0, 4.0), on_retry=waited)
+    except RetriesExhausted as e:
+        raise LLMError(f"Groq API: {e}") from e
 
 
 def structured(
@@ -210,6 +217,7 @@ def structured(
         reply = chat(messages, max_tokens=max_tokens, response_format=response_format)
         elapsed = int((time.monotonic() - started) * 1000)
         cost = take_call_info()
+        retry_log = tracing.take_retries("llm")
         try:
             obj = model_cls.model_validate_json(reply)
         except (ValidationError, json.JSONDecodeError) as e:
@@ -229,6 +237,7 @@ def structured(
                 completion_tokens=cost.completion_tokens,
                 waited_ms=cost.waited_ms,
                 retries=cost.retries,
+                retry_log=retry_log,
             )
         )
         if obj is not None and problem is None:

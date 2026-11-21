@@ -44,6 +44,7 @@ class LLMAttempt(BaseModel):
     completion_tokens: int = 0
     waited_ms: int = 0  # time spent waiting for the token allowance or a rate limit
     retries: int = 0  # HTTP-level retries inside this call
+    retry_log: list[str] = []  # what each retry waited for
 
 
 class SourceRecord(BaseModel):
@@ -89,6 +90,7 @@ class ToolStep(BaseModel):
     new_sources: int = 0  # how many were not already in the evidence store
     dropped_for_budget: int = 0  # returned but left out because the evidence budget was spent
     trimmed_for_budget: int = 0  # kept, but cut short to fit
+    retries: list[str] = []  # each failed attempt inside the tool, and how long it waited
 
 
 class SynthesisStep(BaseModel):
@@ -141,6 +143,16 @@ class Run:
         )
         self._t0 = time.monotonic()
         self._attempts: list[LLMAttempt] = []
+        self._retries: list[tuple[str, str]] = []  # (label, note)
+
+    def note_retry(self, label: str, note: str) -> None:
+        self._retries.append((label, note))
+
+    def take_retries(self, label: str) -> list[str]:
+        """The retry notes recorded under `label` since they were last taken."""
+        mine = [n for lab, n in self._retries if lab == label]
+        self._retries = [(lab, n) for lab, n in self._retries if lab != label]
+        return mine
 
     def add(self, step: PlanStep | ToolStep | SynthesisStep) -> None:
         step.index = len(self.trace.steps) + 1
@@ -178,6 +190,17 @@ def record_attempt(attempt: LLMAttempt) -> None:
     run = current()
     if run:
         run.record_attempt(attempt)
+
+
+def note_retry(label: str, note: str) -> None:
+    run = current()
+    if run:
+        run.note_retry(label, note)
+
+
+def take_retries(label: str) -> list[str]:
+    run = current()
+    return run.take_retries(label) if run else []
 
 
 def take_attempts() -> list[LLMAttempt]:

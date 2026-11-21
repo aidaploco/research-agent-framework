@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from research_agent import retry
 from research_agent.tools import arxiv
 from research_agent.tools.base import ToolError
 from tests.fakes import FakeHTTPResponse
@@ -40,7 +41,7 @@ def fast(monkeypatch):
     """No real waiting; record the backoff sleeps."""
     sleeps = []
     monkeypatch.setattr(arxiv, "_space_requests", lambda: None)
-    monkeypatch.setattr(arxiv.time, "sleep", sleeps.append)
+    monkeypatch.setattr(retry.time, "sleep", sleeps.append)
     return sleeps
 
 
