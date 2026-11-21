@@ -169,7 +169,7 @@ Each milestone ends runnable and committed. Closed checklist IDs are listed.
   - Save outputs and traces.
   - Single-pass versus multi-step on at least two questions (candidates: Q4, Q6).
   - Closes: Q0–Q8, M4.
-- **M8 — Tier 3 depth (one item).**
+- **M8 — Tier 3 depth (one item).** *(Changed: not built. The Tier 3 item claimed is tool reliability and fallback, done in M2, M3 and M5; the evaluation harness is described in the README as what would have been built.)*
   - Recommended: the evaluation harness, with 15 or more questions, expected sources, must-include facts, must-not-include facts, and metrics for relevance, attribution and refusal.
   - Closes: one D item.
 - **M9 — README and final audit.**

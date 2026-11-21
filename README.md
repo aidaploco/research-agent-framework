@@ -1,57 +1,88 @@
 # Research Agent Framework
 
-A research agent for a banking team. It takes a natural-language question, plans which
-tool to use, searches (Wikipedia, arXiv), and prints an answer in which every sourced
-claim carries a checked citation. It runs on free tiers only: no paid API keys.
+A research agent for a banking team. Ask it a question in plain English: it plans which source to
+use (Wikipedia for background, arXiv for papers, FRED for economic data), searches in up to three
+steps, and prints an answer in which every sourced claim carries a citation that code has checked
+against the retrieved text. It runs on free tiers only: no paid API keys. Every run leaves a
+structured trace that explains each decision, and failures of the data sources are handled with
+retries, fallbacks and plain notices (the Tier 3 item chosen here: tool reliability and fallback).
 
-> **Status: work in progress.** Milestones M0 to M6 are implemented (see [PLAN.md](PLAN.md));
-> the 8 reference runs and the evaluation harness are next.
-> Sections marked *TBD* are filled in as those land. This README is updated with each milestone.
+> **Status:** Tier 1 and Tier 2 are complete, and the Tier 3 item chosen is *tool reliability and
+> fallback* (see [PLAN.md](PLAN.md)). An evaluation harness was planned and **not built**: the
+> design is in *What I would have built* below.
 
-## Setup and run
+## Quick start
 
-Requirements: [uv](https://docs.astral.sh/uv/) and Python 3.11 or newer (uv installs a
-suitable Python for you if you don't have one).
+You need [uv](https://docs.astral.sh/uv/getting-started/installation/) (for example
+`brew install uv`, or `curl -LsSf https://astral.sh/uv/install.sh | sh`). uv installs a suitable
+Python (3.11 or newer) by itself if you do not have one.
+
+**1. Get the code and install the dependencies**
 
 ```sh
-uv sync                      # install dependencies from uv.lock
-cp .env.example .env         # then put your free Groq key in .env
+git clone https://github.com/aidaploco/research-agent-framework.git
+cd research-agent-framework
+uv sync                      # installs exactly what uv.lock pins
+```
+
+**2. Check the install, with no key and no network** (about 2 seconds)
+
+```sh
+uv run pytest -q             # expect: every test passes
+```
+
+**3. Add a free Groq key and ask a question**
+
+Get a key at <https://console.groq.com> (no payment details needed), then:
+
+```sh
+cp .env.example .env         # open .env and paste the key after GROQ_API_KEY=
 uv run python main.py "What is the Federal Reserve's discount window?"
 ```
 
-Get a free Groq key at <https://console.groq.com>. No payment details are needed.
-A FRED key (optional, but needed for current economic data such as the unemployment rate) is
-free at <https://fred.stlouisfed.org/docs/api/api_key.html>; put it in `.env` as `FRED_API_KEY`.
-Without it the agent still runs, and says plainly that live data could not be retrieved.
+You will see the answer on stdout, preceded on stderr by what the agent did
+(`[plan 1] search wikipedia ...`) and the path of the run's trace (`[trace] ...`). The first
+`uv run` also downloads Python and the packages, so it is slower than later runs. Add
+`2>/dev/null` to see only the answer.
 
-By default the agent may make up to 3 searches, one tool at a time, refining as it goes. For
-one search and then an answer, add `--single-pass` (or set the cap with `--max-steps N`):
+**4. Optional: a free FRED key for current economic data**
+
+Get one at <https://fred.stlouisfed.org/docs/api/api_key.html> and add it to `.env` as
+`FRED_API_KEY=...`. Without it the agent still runs and says plainly that live data could not be
+retrieved (try the unemployment-rate question in *Using the agent* below).
+
+### More ways to run it
 
 ```sh
+# one search and then an answer (the default is up to 3 searches, refining as it goes)
 uv run python main.py --single-pass "What is the Federal Reserve's discount window?"
-```
+uv run python main.py --max-steps 2 "..."          # set the cap yourself
 
-Each step the agent takes is printed to stderr (`[plan 1] ...`, `[plan 2] ...`) and so is the
-path of the run's trace (`[trace] ...`); add `2>/dev/null` to see only the answer.
-
-Every run writes a trace. To read the last one:
-
-```sh
+# read what the last run did, step by step
 uv run python -m research_agent.trace_cli show latest      # the run as a narrative
 uv run python -m research_agent.trace_cli list             # recent runs
 uv run python -m research_agent.trace_cli sql "SELECT type, tool, status, duration_ms FROM steps"
+
+# run the assignment's eight reference questions (writes outputs/<mode>/qN.md and keeps the traces)
+uv run python scripts/run_reference.py                     # multi-step
+uv run python scripts/run_reference.py --single-pass       # one search each
+uv run python scripts/run_reference.py --only 4 6          # just those questions
 ```
 
-Development:
+Mind the free tier's **daily token cap** (200,000 tokens per model per day; see *Token budget and
+pacing*): all eight reference questions in both modes use about a third of it.
+
+### Development
 
 ```sh
-uv run pytest                # unit tests: no network, no API key needed
+uv run pytest -q                                    # unit tests: no network, no API key needed
+uv run --python 3.11 pytest -q                      # the other Python version CI tests
 uv run ruff format --check . && uv run ruff check .
 ```
 
 The unit tests never touch the network: an autouse fixture fails any test that opens a
 socket, and they use shared fakes (`tests/fakes.py`): a scripted fake LLM, fake tools, and
-recorded HTTP responses. Live calls belong to the evaluation runs, not the unit tests.
+recorded HTTP responses. Live calls belong to the reference runs and the evaluation runs.
 
 ## Using the agent
 
@@ -92,13 +123,17 @@ The answer goes to stdout; the plan and the trace path go to stderr. An abridged
 
 ## Sources
 [W1] Basel III - https://en.wikipedia.org/wiki/Basel_III
+
+## Retrieved but not cited (not used as support above)
 [W2] Basel Committee on Banking Supervision - https://en.wikipedia.org/wiki/Basel_Committee_on_Banking_Supervision
 ```
 
 - **From sources:** statements taken from the retrieved sources. Each carries citation markers
-  (`[W1]`, `[A2]`: the letter is the tool, Wikipedia or arXiv, and the number is the source),
+  (`[W1]`, `[A2]`, `[F1]`: the letter is the tool, Wikipedia, arXiv or FRED, and the number is the source),
   written by code after it checked the source exists and that every figure in the statement is
-  in it. The *Sources* list at the bottom gives title, ID and URL so you can open each one.
+  in it. The *Sources* list at the bottom gives title, ID and URL of what the answer cites, so
+  you can open each one. Sources the agent retrieved but no claim relies on are listed apart,
+  under *Retrieved but not cited*, so an unrelated search hit is not mistaken for support.
 - **Model inference / caveats:** what the model adds itself. Treat these as reasoning, not as
   retrieved fact.
 - **Unverified** (only when present): statements the model made that failed the checks, kept
@@ -122,16 +157,19 @@ Set these in `.env` (copy `.env.example`) or in the environment.
 | Variable | Required | Meaning |
 |---|---|---|
 | `GROQ_API_KEY` | yes | Free key from <https://console.groq.com>. |
-| `LLM_MODEL` | no | Groq model id; default `openai/gpt-oss-120b`. Only the default has been tested. The model must support JSON-schema output. |
+| `LLM_MODEL` | no | Groq model id; default `openai/gpt-oss-120b`. `openai/gpt-oss-20b` has also been used (see *Which model produced which outputs*); other models are untested. The model must support strict JSON-schema output. |
 | `TRACE_DIR` | no | Where traces and the index are written; default `.traces`. |
 | `FRED_API_KEY` | no | Free key for the FRED tool (current economic data). Without it FRED reports that live data cannot be retrieved. The key is sent only to FRED and never appears in errors, notices or traces. |
 
 ### Troubleshooting
 
 - **`error: GROQ_API_KEY is not set`:** create `.env` from `.env.example` and add your key.
-- **`error: Groq API error 429`:** the free tier's rate limit (about 8,000 tokens per minute for
-  the default model). The client already retries with the `Retry-After` the API gives; wait a
+- **`error: Groq API error 429`:** the free tier's per-minute limit (about 8,000 tokens per minute
+  for the default model). The client already retries with the `Retry-After` the API gives; wait a
   minute and run again. Running several questions back to back can trigger it.
+- **`error: Groq asks to wait 329s ... tokens per day (TPD): Limit 200000`:** the *daily* cap (see
+  *Token budget and pacing*), not the per-minute one. It refills at about 8,300 tokens an hour.
+  Use another model for now (`LLM_MODEL=openai/gpt-oss-20b`) or wait.
 - **A notice says FRED is unavailable and no current figure is stated:** `FRED_API_KEY` is not set
   (or FRED could not be reached). Add the key to `.env`; until then the agent will not state a
   current value, by design.
@@ -173,13 +211,20 @@ src/research_agent/
   grounding.py               checks that figures in a claim are in the cited sources
   evidence.py                evidence IDs (W1, A2, ...) and the per-run evidence size budget
   llm.py                     Groq client (token pacing, Retry-After cap) + structured() output
+  retry.py                   the one retry policy (short backoff), every retry traced
   tracing.py                 trace models, the run recorder, JSON + SQLite storage
   trace_cli.py               list / show / sql / reindex for traces
+  reference.py               the assignment's eight reference questions
   tools/
     base.py                  Tool interface, Source model, options models
     registry.py              the one place tools are registered and described
     wikipedia.py  arxiv.py   Wikipedia and arXiv
     fred.py                  FRED: current and historical US economic statistics
+scripts/
+  run_reference.py           run the reference questions in either mode
+  summarize_reference.py     build the comparison table from the traces
+outputs/                     answers and traces from the reference runs (see below)
+tests/                       unit tests (fakes in tests/fakes.py; the network is blocked)
 ```
 
 **Tools are plug-ins.** Each tool subclasses `Tool`: a `name`, an `id_prefix`, a one-line
@@ -201,7 +246,7 @@ a rule is sent back with the reason for one retry, then a safe default is used r
 failing the run. A refusal ends the run without searching or calling the model again.
 
 **Evidence IDs.** Every retrieved source gets an ID from its tool's prefix and a counter:
-`W1`, `W2` for Wikipedia, `A1`, `A2` for arXiv. IDs are stable for the whole run, and a
+`W1`, `W2` for Wikipedia, `A1`, `A2` for arXiv, `F1` for FRED. IDs are stable for the whole run, and a
 source with a URL already stored keeps its original ID.
 
 **Synthesis: structured claims, checked by code.** The model does not write free text
@@ -223,9 +268,10 @@ is validated again by Pydantic. Code then:
    arithmetic is not trusted either: a derived figure that no source states is flagged.
 
 The output has separate sections: *Notices* (written by code: tool failures and
-substitutions), *From sources* (validated claims with citations),
-*Unverified* (only if something was demoted), *Model inference / caveats*, and *Sources*
-(title, ID, URL, built from the tool results, never written by the model).
+substitutions), *From sources* (validated claims with citations), *Gaps* (when the sources cover
+only part of the question), *Unverified* (only if something was demoted), *Model inference /
+caveats*, *Sources* (what the answer cites: title, ID and URL, built from the tool results and
+never written by the model), and *Retrieved but not cited* (sources no claim relies on).
 
 **Orchestration pattern: a ReAct-style loop with state kept in code.** The agent alternates
 *reason* (the planner picks an action after seeing what has happened) and *act* (run one tool),
@@ -275,23 +321,32 @@ follow a decision from the offered tools, to the reasoning, to the retrieved evi
 claims that survived validation. `trace_cli show` prints exactly that as a narrative:
 
 ```
-Step 1  PLAN (458 ms)
-  chose: wikipedia  query='Basel III'
+Step 1  PLAN (718 ms, 3 search(es) left)
+  saw (earlier steps):
+    (nothing yet)
+  chose: search wikipedia  query='Basel III'
   why: Wikipedia provides a concise overview of Basel III capital requirements.
-    model call 1 (openai/gpt-oss-120b, 457 ms): accepted
+    model call 1 (openai/gpt-oss-120b, 457 ms, 768+138 tokens): accepted
 Step 2  TOOL wikipedia [planned] (2565 ms)  query='Basel III'
-  result: 2 sources
+  result: 2 sources (2 new)
     [W1] Basel III  (8000 chars)  https://en.wikipedia.org/wiki/Basel_III
     [W2] Basel Committee on Banking Supervision  (3000 chars)  https://en.wikipedia.org/wiki/...
-Step 3  SYNTHESIS (2221 ms)  may cite: W1, W2
+Step 3  PLAN (700 ms, 2 search(es) left)
+  saw (earlier steps):
+    step 1: search wikipedia query='Basel III' -> [W1] Basel III; [W2] Basel Committee on Banking...
+  chose: finish
+Step 4  SYNTHESIS (2221 ms)  may cite: W1, W2
   7 sourced, 0 unverified
     sourced [W1]: Basel III requires banks to have a minimum Common Equity Tier 1 (CET1) ratio ...
 ```
 
+(Abridged from a real run; `trace_cli show` prints every field.)
+
 The SQLite index has three tables (`runs`, `steps`, `llm_calls`), so questions like "how often
 did the planner's output need a repair?", "which runs fell back to another tool?" or "how many
-tokens did multi-step runs use compared with single-pass?" are one `SELECT` away (`trace_cli sql` accepts read-only queries only). The index can always be rebuilt
-from the JSON files with `trace_cli reindex`.
+tokens did multi-step runs use compared with single-pass?" are one `SELECT` away (`trace_cli sql`
+accepts read-only queries only). The index can always be rebuilt from the JSON files with
+`trace_cli reindex`.
 
 Notes on what a trace is and is not:
 
@@ -301,10 +356,11 @@ Notes on what a trace is and is not:
 - **"Raw tool output" is the list of sources as the tool returned it** after the tool's own
   truncation (for example 8,000 characters of the top Wikipedia article), not the raw HTTP
   response.
-- Traces include full prompts and retrieved text, so they can be large. They stay local
-  (`.traces/` is gitignored); sample traces for the reference questions are committed with
-  their outputs in a later milestone. An index from an older version of the schema is rebuilt
-  from the JSON files automatically.
+- Traces include full prompts and retrieved text, so they can be large. Your own runs stay local
+  (`.traces/` is gitignored); the traces of the reference runs are committed under
+  [`outputs/traces/`](outputs/traces/) so each answer in [`outputs/`](outputs/) can be traced to
+  its evidence (`trace_cli --dir outputs/traces/multi-step show <run id>`). An index from an older
+  version of the schema is rebuilt from the JSON files automatically.
 
 ## Key design decisions and tradeoffs
 
@@ -356,10 +412,10 @@ tier** with `openai/gpt-oss-120b`.
 
 I chose cloud because the planner and the synthesis depend on reliable structured
 output and reasoning, and because a reviewer can run a question in seconds. The cost is
-the signup and the rate limits. The limits I observed in Groq's response headers for
-this model on a free key were **8,000 tokens per minute** and **1,000 requests** (the headers
-show it resetting about a day later; limits change, so check the Groq console). The token limit is the one that matters: it caps how much tool output can be
-sent to the model, which is why there is an evidence budget (see *Token budget and pacing*),
+the signup and the rate limits. The limits I observed for this model on a free key were
+**8,000 tokens per minute**, **1,000 requests** per day and **200,000 tokens per day** (limits
+change, so check the Groq console). The token limits are the ones that matter: the per-minute one
+caps how much tool output can be sent to the model, which is why there is an evidence budget (see *Token budget and pacing*),
 and why Wikipedia extracts are truncated (8,000 characters for the top article, 3,000 for
 others) and arXiv abstracts to 1,200.
 
@@ -367,7 +423,7 @@ All LLM calls go through `llm.py`, which is the swap point for another provider.
 servers such as Ollama expose an OpenAI-compatible endpoint, so a local backend should be
 a change to the URL and model name in that one file. **That is untested**: only Groq has
 been run. Strict JSON-schema output, which synthesis relies on, was verified on Groq with
-this model; a local model may not support it.
+`gpt-oss-120b` and `gpt-oss-20b`; a local model may not support it.
 
 ### Pydantic and structured outputs
 
@@ -414,6 +470,34 @@ Three things follow in the code:
 - **`Retry-After` is capped at 30 seconds.** If the API asks for longer (a daily quota, not a
   per-minute limit) the client stops with a clear error instead of sleeping for hours.
 
+**There is also a daily token cap, and it is the limit that matters for evaluation.** Besides the
+per-minute limit, the free tier allows **200,000 tokens per day per model** (found the hard way:
+a batch of runs exhausted it, with `Limit 200000, Used 199707`). It behaves as a continuously
+refilling bucket, not a clock reset: an error that was 8 tokens short said to retry in 3.5
+seconds, which is 200,000 tokens per 24 hours, about **2.3 tokens a second, or 8,300 an hour**. An
+empty bucket therefore takes hours to recover. The cap is per model, so each model has its own.
+What this costs, measured from the traces:
+
+| Run | Approximate tokens | Share of one day's cap |
+|---|---|---|
+| One question, single-pass | 2,000 to 4,000 | about 2% |
+| One question, multi-step | 3,000 to 7,000 | about 3% |
+| All 8 reference questions, one mode | 25,000 to 40,000 | 12% to 20% |
+| All 8 reference questions, both modes | about 65,000 | about a third |
+
+So the whole reference set can be reproduced once, or twice, in a day on one model, but not
+many times over. When the cap is hit the client stops at once with a clear error and the runs
+are recorded as errors; nothing hangs and no answer is invented.
+
+**Which model produced which outputs.** The default is `openai/gpt-oss-120b`, and the answers
+quoted in *Single-pass vs multi-step (M5)* below came from it. By the time the reference runs
+were repeated after a bug fix, its daily bucket was empty, so the committed reference outputs in
+[`outputs/`](outputs/) were produced with `LLM_MODEL=openai/gpt-oss-20b` (the same family and
+API, with its own full bucket; strict JSON-schema output was verified on it). Every output file
+states its model. A smaller model plans and synthesizes less well, so these outputs are a
+lower bound on what the default model does. To regenerate them with the default model once its
+bucket has refilled: `uv run python scripts/run_reference.py` (and `--single-pass`).
+
 ### FRED: current data, and what happens without a key
 
 FRED is the source of *current* statistics, so the rule for it is strict: **a current figure either
@@ -446,7 +530,10 @@ October 2026, down 0.3 points from a year earlier, from the FRED series page) an
 
 Wikipedia's full-text search ranks an article titled exactly "Basel III" below pages that
 merely mention it. The tool therefore looks up the exact title first (following
-redirects, skipping disambiguation pages), then adds full-text search hits. The planner is
+redirects, skipping disambiguation pages), then adds the top full-text search hits (up to
+three), fetching the text of each hit with its own request: for whole-article text the API
+returns only one page per request, so batching them silently gave most hits no text (a bug the
+reference runs exposed, now a regression test). The planner is
 asked to name the article it expects. Wikipedia also returns HTTP 429 under bursts, so
 requests retry with backoff.
 
@@ -472,14 +559,147 @@ body, not a 429, and it occasionally times out; Wikipedia returns 429 under burs
   was unavailable and why, and, if another tool answered instead, that the sources come from
   that tool and may not cover what the planned one would have. The model is told as well, so
   it can caveat. A substitute that returns nothing is not presented as an answer.
-- **Not done:** circuit breakers, and measuring answer quality under partial failure
-  (that is the Tier 3 reliability item; the Tier 3 choice here is the evaluation harness).
-  A tool that works but returns nothing does not trigger a fallback; in a multi-step run the
-  planner sees "no results" in its log and refines the query.
+- **Planner view:** a tool that works but returns nothing does not trigger a fallback; in a
+  multi-step run the planner sees "no results" in its log and refines the query.
+
+### Tier 3, tool reliability and fallback: what was built and what was not
+
+The Tier 3 item chosen is *tool reliability and fallback*. Against its requirements:
+
+| Requirement | Status |
+|---|---|
+| Retry logic | **Built.** One shared helper (`retry.py`) for arXiv, Wikipedia, FRED and the model client: 3 attempts, short backoff, `Retry-After` honoured up to a cap, every retry recorded in the trace. The model client also paces itself to the token limits and retries a model that wrongly tries to call a tool. |
+| Fallback strategies | **Built.** If the planned tool is down on the last allowed step, the other tools are tried with the same query; earlier, the planner sees the failure and re-plans. A failed tool is not offered again in the same run. Every substitution is disclosed by a code-written notice, and for live data (FRED) the notice says no current figure is available. |
+| Circuit breakers | **Partial.** The per-run failed-tool set stops a dead tool being retried on every step, which is a breaker scoped to one run. There is no breaker that remembers failures across runs. |
+| Inject synthetic failures into the test suite | **Built.** The unit tests inject timeouts, connection errors, HTTP 429 and 5xx, arXiv's rate-limit message in a 200 body, a bad FRED key, a missing key, empty results, every tool down at once, and the model's tool-call glitch, and assert the retry counts, the waits, the notices and the trace. |
+| Demonstrate graceful degradation | **Built, as demonstrations.** arXiv made unreachable (three attempts, notice, Wikipedia fallback, honest refusal) and Q5 without a FRED key (notice, no current rate stated). Both are in this README and in [`outputs/`](outputs/). |
+| Measure how answer quality changes when tools are unavailable | **Not built.** There is no systematic measurement; the two demonstrations are single runs. This is the part an evaluation harness would have supplied. |
+
+## What I would have built: the evaluation harness
+
+The harness was designed and not built (time, and the free tier's daily token cap, about 100,000
+tokens for one multi-step pass over 20 questions, made live evaluation costly). The design, so it
+can be judged and built:
+
+- **Cases** in `evals/cases.yaml`, validated by a Pydantic schema: about 20 questions covering
+  factual lookup, academic search, multi-source synthesis, FRED data, out-of-scope questions,
+  unanswerable ones (a future forecast; a bank's internal policy no tool covers) and an adversarial
+  one (asking for the current unemployment rate from memory). Each case states the expected
+  sources, the key facts that must appear (numbers compared by value), the facts that must not,
+  whether the agent should refuse, and which tools it should and should not use.
+- **Metrics, all computed from the saved trace alone** so they run offline: *relevance* as key-fact
+  recall over the sourced claims (pass at 0.7) plus a forbidden-fact check; *source attribution*
+  as expected-source recall among cited sources plus a weak-support rate for claims (the share of
+  a claim's content words missing from its cited text, covering the claims that have no number to
+  check); *refusal* as a should-refuse by did-refuse matrix with false-refusal and false-answer
+  rates; and tool-routing accuracy, steps, tokens and time.
+- **Two tiers.** An offline tier grades committed traces with no model call (cheap, deterministic,
+  suitable for CI) and tests the graders on hand-made good and bad answers. A live tier runs the
+  agent per case, sequentially and budget-aware, and writes a report with per-type aggregates and
+  a single-pass vs multi-step comparison. An LLM judge, from a different model family, was left as
+  a later option.
+- **It would also have supplied the missing Tier 3 measurement:** run the live tier with a tool
+  forced to fail and compare the scores.
 
 ## Agent performance summary
 
-*TBD (M7 runs the 8 reference questions; M8 adds the evaluation harness).*
+### The eight reference questions (M7)
+
+Every answer is in [`outputs/`](outputs/) (`multi-step/qN.md`, `single-pass/qN.md`, plus the Q5
+pair in `outputs/q5-*.md`), and every run's trace is in [`outputs/traces/`](outputs/traces/). The
+table is generated from those traces by `scripts/summarize_reference.py`. One live run per question
+per mode, on one day; not a benchmark.
+
+**Read this first.** These runs used **`openai/gpt-oss-20b`**, not the default model, because the
+default model's daily token cap was exhausted (see *Token budget and pacing*). The 20b model plans
+less well, so these results understate the default model. Single-pass was run only for Q1, Q2, Q4
+and Q6 (the daily cap and the deadline); the other rows say "not run". I did not hand-grade every
+answer; the numbers below are counts from the traces.
+
+| Q | Mode | Outcome | Tool calls | Sourced / unverified claims | Tokens | Waiting | Time |
+|---|---|---|---|---|---|---|---|
+| Q1 | single-pass | answered | 1 (wikipedia) | 8 / 0 | 4,191 | 23 s | 27 s |
+| Q1 | multi-step | answered | 1 (wikipedia) | 8 / 0 | 5,069 | 0 s | 4 s |
+| Q2 | single-pass | answered | 1 (wikipedia) | 9 / 0 | 4,917 | 34 s | 37 s |
+| Q2 | multi-step | answered | 2 (wikipedia) | 10 / 0 | 5,830 | 34 s | 44 s |
+| Q3 | single-pass | (not run) | | | | | |
+| Q3 | multi-step | answered | 1 (arxiv) | 6 / 0 | 4,032 | 21 s | 23 s |
+| Q4 | single-pass | error | 0 (none) | n/a | 0 | 0 s | 8 s |
+| Q4 | multi-step | error | 1 (wikipedia) | n/a | 869 | 0 s | 14 s |
+| Q5 | single-pass | (not run) | | | | | |
+| Q5 | multi-step | answered | 1 (fred) | 2 / 0 | 2,873 | 19 s | 22 s |
+| Q6 | single-pass | answered | 1 (wikipedia) | 4 / 0 | 4,104 | 48 s | 53 s |
+| Q6 | multi-step | answered | 1 (wikipedia) | 5 / 0 | 4,996 | 43 s | 47 s |
+| Q7 | single-pass | (not run) | | | | | |
+| Q7 | multi-step | out_of_scope | 0 (none) | n/a | 807 | 0 s | 0 s |
+| Q8 | single-pass | (not run) | | | | | |
+| Q8 | multi-step | answered | 2 (wikipedia) | 3 / 0 | 5,692 | 46 s | 53 s |
+
+What the table shows:
+
+- **Seven of eight questions answered in multi-step mode, one refused by design.** Q7 (the
+  restaurant) was refused with no search and almost no tokens, as intended. Q5 used FRED.
+- **Q4 failed on this model, in both modes.** `gpt-oss-20b` repeatedly tried to call a tool that
+  was not offered, which the API rejects (three retries were not enough), and single-pass then hit
+  the per-minute limit. It is recorded as an error, not hidden. The same question *was* answered
+  with the default model in the M5 comparison below.
+- **On the 20b model multi-step was not clearly better.** On Q6 it stopped after one Wikipedia search
+  and never reached arXiv (5 claims against 4); on Q2 it made a second Wikipedia search for 10
+  claims against 9. The clear multi-step win (4 against 7 claims, adding arXiv) came from the default
+  model and is in the M5 table below. Whether multi-step helps depends on the planner.
+- **Cost:** a multi-step answer used 3,000 to 6,000 tokens; waiting for the per-minute token allowance
+  dominated the time.
+
+Q6, single-pass and multi-step, as run on `gpt-oss-20b` (the spec asks for both outputs):
+
+<details><summary>Q6 single-pass</summary>
+
+```
+## From sources
+- An inverted yield curve, where short‑term Treasury yields exceed long‑term yields, has historically been one of the most reliable leading indicators of a U.S. recession, typically preceding a recession by 7 to 24 months. [W1]
+- The expectations theory explains that an inverted curve signals investors’ expectation of lower future short‑term rates, often associated with an impending recession and subsequent Fed rate cuts. [W1]
+- During the longest and deepest Treasury yield curve inversion that began in July 2022, economists predicted an imminent recession, but none materialized and economic growth remained steady. [W1]
+- In every previous inversion examined by Deutsche Bank analysts, the curve had re‑steepened before a recession began, suggesting that a return to positive slopes may precede economic recovery. [W1]
+
+## Model inference / caveats
+- Inference: The inverted yield curve is a useful but not infallible predictor of recessions; its predictive power may weaken when market participants become overly aware of its historical significance.
+- Caveat: The provided sources do not cite any recent academic papers on the topic; thus, no up‑to‑date scholarly literature is referenced. The evidence is largely historical and may not fully capture current market dynamics. The analysis is limited to the information available in the supplied sources.
+
+## Sources
+[W1] Inverted yield curve - https://en.wikipedia.org/wiki/Inverted_yield_curve
+
+## Retrieved but not cited (not used as support above)
+[W2] Yield curve - https://en.wikipedia.org/wiki/Yield_curve
+[W3] Light curve - https://en.wikipedia.org/wiki/Light_curve
+```
+
+</details>
+
+<details><summary>Q6 multi-step</summary>
+
+```
+## From sources
+- An inverted yield curve occurs when short‑term Treasury yields exceed long‑term Treasury yields, such as the 10‑year yield falling below the 2‑year or 3‑month yield. [W1]
+- The Federal Reserve’s policy of raising the federal funds rate above longer‑term Treasury rates can cause an inverted yield curve, which is associated with cooling demand, a slowing job market, and rising unemployment. [W1]
+- The expectations theory explains that an inverted yield curve signals investors’ expectations of lower future short‑term rates, often linked to an anticipated recession and subsequent Fed rate cuts. [W1]
+- An inverted yield curve has historically been one of the most reliable leading indicators for U.S. recessions, often preceding a recession by 7 to 24 months. [W1]
+- The yield curve is commonly summarized by a term spread, such as the difference between the 10‑year Treasury yield and the 3‑month Treasury bill rate, and a sustained inversion of this spread has historically preceded U.S. recessions. [W2]
+
+## Model inference / caveats
+- Inference: The relationship between yield curve inversions and recessions is that inversions are generally interpreted as market expectations of an upcoming economic slowdown, which is why they are used as recession predictors.
+- Inference: The recent 2022–2024 inversion did not lead to a recession, indicating that the predictive power of inversions may have weakened or that other economic factors mitigated the expected downturn.
+- Caveat: The sources do not provide specific recent academic papers on the topic; they only describe the historical relationship and theoretical explanations.
+- Caveat: No quantitative data or empirical studies are cited in the provided sources to assess the current predictive accuracy of yield curve inversions.
+
+## Sources
+[W1] Inverted yield curve - https://en.wikipedia.org/wiki/Inverted_yield_curve
+[W2] Yield curve - https://en.wikipedia.org/wiki/Yield_curve
+
+## Retrieved but not cited (not used as support above)
+[W3] Light curve - https://en.wikipedia.org/wiki/Light_curve
+```
+
+</details>
 
 ### Q5, the unemployment rate, both ways (M6, live, one run each)
 
@@ -578,8 +798,44 @@ Known at this milestone:
   that was asked for. What is guaranteed is that no current rate appears and no figure comes from
   the model's memory; the steer toward definitions only is best effort.
 - Results above are single live runs on one day; the planner and the sources vary from run to run.
-- No evaluation harness yet.
+- **No evaluation harness** (see *What I would have built*): answer quality was judged by reading outputs and traces, not scored.
 
 ## What I would do differently with more time
 
-*TBD (M9).*
+Ordered by how much each would improve the answers, based on what went wrong in the runs.
+
+1. **Retrieve passages, not articles.** The biggest weakness is retrieval, not the model: the
+   Basel III figures sit past character 4,000 of the article, a Wikipedia search returned the
+   wrong article for a natural-language query, and long articles are truncated to fit the token
+   budget. I would split sources into sections or passages, rank them against the question
+   (BM25, or embeddings if a free option fits), and send only the best few. That raises recall
+   and cuts tokens at once, which also eases the daily token cap.
+2. **Make the planner check coverage.** On the 2008 vs COVID-19 question the planner called the
+   evidence sufficient when half of the question was unanswered. I would have it break the
+   question into parts first and tick each off against the evidence before it may finish, and I
+   would use the evaluation harness to tune that against recorded cases.
+3. **Cache and replay model calls.** The daily token cap made it expensive to re-run anything.
+   A disk cache keyed on the request would make repeat runs free and the reference outputs
+   reproducible offline, and would give the harness deterministic regression tests.
+4. **Check meaning, not only figures.** Today only numbers are checked against the cited text;
+   a claim without a number is checked only for a valid citation. An entailment check (a small
+   NLI model, or an LLM judge from a different model family, which I left out for cost) would
+   catch a claim that misreads its source. The harness already measures how often claims are
+   weakly supported by a lexical proxy; a judge would tell me how good that proxy is.
+5. **Support a local model properly.** The model client has one swap point and the OpenAI-
+   compatible endpoint of Ollama should fit it, but I never ran it. A tested local option would
+   remove the quota entirely, at the price of speed and, probably, reliability of structured
+   output.
+6. **Add the internal documents.** The scenario mentions the team's internal docs; the tool
+   interface makes a local document search (embeddings over a folder) a one-class addition.
+7. **Parallel retrieval and a real step budget.** One tool per step suited the free tier, but with
+   a higher limit, independent searches (a definition and papers) should run together, and the
+   step cap should become a token budget.
+8. **Build the evaluation harness above**, then extend it: more cases, several repeats per case
+   with a pass rate, confidence intervals, and a nightly live run with secrets in CI. Twenty
+   cases support no statistical claims.
+9. **Cross-run circuit breakers and measured degradation.** The failed-tool set lives for one run;
+   a breaker that remembers a tool is down across runs, and a measurement of how answers degrade
+   when it is, would complete the Tier 3 item.
+10. **Operational polish:** stream the answer as it is written, export traces to OpenTelemetry,
+    and record token use per step for capacity planning.

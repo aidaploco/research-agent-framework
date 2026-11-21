@@ -1,0 +1,260 @@
+{
+  "run_id": "20261121T025637133960Z-500e",
+  "started_at": "2026-11-21T02:56:37+00:00",
+  "question": "What recent academic research exists on using machine learning for credit risk assessment?",
+  "outcome": "answered",
+  "mode": "multi-step",
+  "max_steps": 3,
+  "stop_reason": "duplicate",
+  "error": "",
+  "duration_ms": 22723,
+  "model": "openai/gpt-oss-20b",
+  "notices": [],
+  "answer": "## From sources\n- A multi-agent framework called Trusted Financial Data (TFD) integrates predictive risk modeling, behavioral intelligence, data-trust assessment, explainable AI, and uncertainty-aware decision orchestration for credit-default and payment-fraud management. [A3]\n- Adaptive TFD achieved recall values of 0.6234 and 0.9366, with ROC-AUC values of 0.7584 and 0.9474 on the Home Credit Default Risk and IEEE-CIS Fraud Detection datasets, respectively. [A3]\n- A functional representation of credit behavior uses functional data analysis to model probability of default, representing credit variables as continuous-time processes and applying functional logistic regression. [A4]\n- Conditional weight of evidence for gradient-boosted credit models measures the change in default log odds from observing a characteristic after the remaining credit information is known, and gradient-boosted trees can estimate this metric accurately. [A2]\n- An industrial evaluation program (bakeoff) assessed ten agentic AI platforms on counterparty credit risk, revealing that platform performance can be ranked across nine capability dimensions, with high Cronbach's alpha and strong rank correlations indicating a halo effect. [A1]\n- Causal Evidentiary Governance (CEG) introduces a framework for regulated institutions to commit to a versioned directed acyclic graph (DAG) partitioning causal pathways into allowable and disallowed groups, measuring prediction variation attributable to disallowed pathways via the Causal Harm Rate. [A5]\n\n## Model inference / caveats\n- Caveat: The sources focus on specific frameworks or evaluation studies; broader literature on machine learning for credit risk assessment is not covered.\n- Caveat: The performance metrics reported are from specific datasets and may not generalize to all credit risk contexts.\n\n## Sources\n[A1] A Capability Framework for Evaluating Agentic AI Platforms in Regulated Enterprises (arXiv:2611.24039v1) - https://arxiv.org/abs/2611.24039v1\n[A2] Conditional Weight of Evidence for Gradient-Boosted Credit Models: Estimation, Additivity and Its Relation to Adverse Action Reasons (arXiv:2610.24586v1) - https://arxiv.org/abs/2610.24586v1\n[A3] Trusted financial data for agentic commerce: A multi-agent framework for credit risk, fraud detection, and secure payment decisions (arXiv:2611.18651v1) - https://arxiv.org/abs/2611.18651v1\n[A4] A Functional Representation of Credit Behavior for Probability of Default Modeling (arXiv:2610.07888v2) - https://arxiv.org/abs/2610.07888v2\n[A5] Causal Evidentiary Governance for High-Risk Machine Learning Systems (arXiv:2609.01040v1) - https://arxiv.org/abs/2609.01040v1",
+  "steps": [
+    {
+      "type": "plan",
+      "index": 1,
+      "duration_ms": 435,
+      "tools_offered": "- wikipedia: Encyclopedia articles. Best for definitions, how institutions and mechanisms work, history and general background. Query: a short topic name (2-5 words).\n- arxiv: Academic papers (abstracts, authors, dates). Best for research literature and 'recent papers' questions. Query: 3-6 topical keywords, no filler words.\n    option recent (bool): true to sort newest first instead of by relevance\n- fred: FRED (Federal Reserve Economic Data): CURRENT and historical US economic statistics, with the latest value, the value a year earlier and the change. Use it for questions about the current or recent level of a statistic. Query: a FRED series ID, or keywords to search for one. Common IDs: UNRATE unemployment rate; FEDFUNDS federal funds rate; DPCREDIT discount window primary credit rate; DGS10 and DGS2 10- and 2-year Treasury yields; T10Y2Y and T10Y3M yield curve spreads (negative means inverted); CPIAUCSL consumer price index; GDP nominal and GDPC1 real GDP; PAYEMS nonfarm payrolls; MORTGAGE30US 30-year mortgage rate; USREC recession indicator. Needs a free API key.\n    option years (int): years back to compare the latest value with (default 1)",
+      "action": "search",
+      "steps_left": 3,
+      "log_shown": "(nothing yet)",
+      "reasoning": "Need recent academic papers on ML for credit risk assessment",
+      "tool": "arxiv",
+      "query": "machine learning credit risk assessment",
+      "options": {
+        "recent": true
+      },
+      "fell_back_to_default": false,
+      "llm_attempts": [
+        {
+          "purpose": "plan",
+          "model": "openai/gpt-oss-20b",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You plan research for a bank's research team, one step at a time.\nTools:\n- wikipedia: Encyclopedia articles. Best for definitions, how institutions and mechanisms work, history and general background. Query: a short topic name (2-5 words).\n- arxiv: Academic papers (abstracts, authors, dates). Best for research literature and 'recent papers' questions. Query: 3-6 topical keywords, no filler words.\n    option recent (bool): true to sort newest first instead of by relevance\n- fred: FRED (Federal Reserve Economic Data): CURRENT and historical US economic statistics, with the latest value, the value a year earlier and the change. Use it for questions about the current or recent level of a statistic. Query: a FRED series ID, or keywords to search for one. Common IDs: UNRATE unemployment rate; FEDFUNDS federal funds rate; DPCREDIT discount window primary credit rate; DGS10 and DGS2 10- and 2-year Treasury yields; T10Y2Y and T10Y3M yield curve spreads (negative means inverted); CPIAUCSL consumer price index; GDP nominal and GDPC1 real GDP; PAYEMS nonfarm payrolls; MORTGAGE30US 30-year mortgage rate; USREC recession indicator. Needs a free API key.\n    option years (int): years back to compare the latest value with (default 1)\n\nWhat has been done so far:\n(nothing yet)\n\nYou may make at most 3 more search(es). Choose the next action:\n- search: call ONE tool. Give tool, query and options.\n- finish: the evidence gathered so far is enough to answer. Only valid once at least one source has been found.\n- refuse: the question is unrelated to banking, finance, economics or their research literature. Only valid before any source has been found.\n\nReply with a JSON object: action, reasoning (one sentence: why), tool, query, options (an object; {} if none).\nWrite queries as short keywords, not full sentences. For wikipedia, name the article you expect\n(for example \"Basel III\" or \"Discount window\"), not a description of the topic.\nIf an earlier search found nothing or the wrong thing, change it: different words, a different article\ntitle, or a different tool. Repeating a query returns the same thing.\nChoose finish as soon as the evidence covers what the question asks; do not search just to confirm.\nIf the question needs more than one kind of source (for example a definition and recent papers), use a different tool for each.\nNever repeat a search that is already listed."
+            },
+            {
+              "role": "user",
+              "content": "What recent academic research exists on using machine learning for credit risk assessment?"
+            }
+          ],
+          "reply": "{\"action\":\"search\",\"reasoning\":\"Need recent academic papers on ML for credit risk assessment\",\"tool\":\"arxiv\",\"query\":\"machine learning credit risk assessment\",\"options\":{\"recent\":true}}",
+          "problem": null,
+          "duration_ms": 434,
+          "prompt_tokens": 757,
+          "completion_tokens": 59,
+          "waited_ms": 0,
+          "retries": 0,
+          "retry_log": []
+        }
+      ]
+    },
+    {
+      "type": "tool",
+      "index": 2,
+      "duration_ms": 247,
+      "tool": "arxiv",
+      "role": "planned",
+      "query": "machine learning credit risk assessment",
+      "options": {
+        "recent": true
+      },
+      "status": "ok",
+      "error": "",
+      "sources": [
+        {
+          "evidence_id": "A1",
+          "tool": "arxiv",
+          "title": "A Capability Framework for Evaluating Agentic AI Platforms in Regulated Enterprises",
+          "url": "https://arxiv.org/abs/2611.24039v1",
+          "native_id": "arXiv:2611.24039v1",
+          "published": "2026-11-18",
+          "text": "Agentic AI platforms-systems in which LLM agents plan, invoke tools, retain memory and coordinate to change the state of enterprise systems-are being procured faster than they can be measured. Public agent benchmarks score models in fixed harnesses; enterprises buy integrated platforms whose orchestration, memory, governance and tooling layers dominate outcomes, and they buy them largely on the strength of vendor demonstrations. We report an industrial evaluation programme (\"bakeoff\") run by the innovation laboratory of a global bank in which ten platforms-spanning open-source frameworks, proprietary products and hyperscaler ecosystems-were assessed by a cross-functional panel on nine capability dimensions across three financial-services workloads: counterparty credit risk, retrieval-augmented generation and process automation. Scores separate the field into three tiers that are stable under alternative weightings, and surface workload-specific strengths that aggregates hide. A secondary analysis, however, finds Cronbach's alpha = 0.98 across nominally distinct dimensions and rank correlations >= 0.93 with the total for eight of nine: a halo effect indicating that demonstration-bas"
+        },
+        {
+          "evidence_id": "A2",
+          "tool": "arxiv",
+          "title": "Conditional Weight of Evidence for Gradient-Boosted Credit Models: Estimation, Additivity and Its Relation to Adverse Action Reasons",
+          "url": "https://arxiv.org/abs/2610.24586v1",
+          "native_id": "arXiv:2610.24586v1",
+          "published": "2026-10-17",
+          "text": "Traditional weight of evidence assigns a credit characteristic a value based on its association with default across a population. Credit analysis also requires an assessment of that characteristic in the context of an individual applicant's record. We study conditional weight of evidence for this purpose. It measures the change in default log odds from observing a characteristic after the remaining credit information is known. Its sign identifies whether the characteristic adds adverse or favorable information for that applicant, and its magnitude measures the strength of that information. The same characteristic value can therefore receive different assessments for applicants with different payment histories or other credit attributes. We develop estimators using gradient-boosted trees and evaluate their accuracy in a bureau-style simulation. Regressions of the full model's predicted probabilities recover conditional evidence more accurately than separate models fitted to default outcomes, provided the full model is accurate. They also recover a deliberately constructed file-age effect whose direction varies with utilization and is often missed by marginal weight of evidence. Loca"
+        },
+        {
+          "evidence_id": "A3",
+          "tool": "arxiv",
+          "title": "Trusted financial data for agentic commerce: A multi-agent framework for credit risk, fraud detection, and secure payment decisions",
+          "url": "https://arxiv.org/abs/2611.18651v1",
+          "native_id": "arXiv:2611.18651v1",
+          "published": "2026-10-16",
+          "text": "Financial institutions increasingly require intelligent risk-management systems that combine predictive performance with data reliability, interpretability, and adaptable decision policies for emerging agentic commerce environments. This study proposes a Trusted Financial Data (TFD) Multi-Agent Framework that integrates predictive risk modeling, behavioral intelligence, data-trust assessment, explainable artificial intelligence, and uncertainty-aware decision orchestration for credit-default and payment-fraud management. The framework translates heterogeneous risk and trust signals into interpretable Approve, Review, and Decline decisions using fixed and adaptive decision policies. Experimental evaluation was conducted on the Home Credit Default Risk and IEEE-CIS Fraud Detection datasets against five machine-learning baselines: Logistic Regression, Random Forest, XGBoost, LightGBM, and Multi-Layer Perceptron. Adaptive TFD achieved recall values of 0.6234 and 0.9366, with ROC-AUC values of 0.7584 and 0.9474 on Home Credit and IEEE-CIS, respectively. Adaptive orchestration consistently improved minority-class risk detection relative to fixed TFD policies, although at the cost of incr"
+        },
+        {
+          "evidence_id": "A4",
+          "tool": "arxiv",
+          "title": "A Functional Representation of Credit Behavior for Probability of Default Modeling",
+          "url": "https://arxiv.org/abs/2610.07888v2",
+          "native_id": "arXiv:2610.07888v2",
+          "published": "2026-10-06",
+          "text": "This paper proposes a framework for modeling probability of default via functional data analysis. By representing a series of credit variables as functions, we investigate whether intra-monthly information improves default predictability in linear models. We further show how a range of widely used variables, among them available funds, utilization rate, and overdraft, can all be derived from three quantities observed over time. Namely, 1) the type of each account, 2) the balance of the account, and 3) the size of the credit limit on the account. Retaining these quantities as continuous-time processes, rather than reducing them to monthly aggregated values, yields a continuous faithful representation of the borrower. When analyzing these three processes, we discovered that recurring events associated with the ordinal position among banking days created strong cyclical patterns. We therefore develop a relative time framework that aligns the recurring events across borrowers, ensuring that borrowers possess the same cyclical pattern, regardless of real time. We assess the framework using functional logistic regression. This approach accommodates the continuous representation while rem"
+        },
+        {
+          "evidence_id": "A5",
+          "tool": "arxiv",
+          "title": "Causal Evidentiary Governance for High-Risk Machine Learning Systems",
+          "url": "https://arxiv.org/abs/2609.01040v1",
+          "native_id": "arXiv:2609.01040v1",
+          "published": "2026-09-01",
+          "text": "Machine learning systems deployed for credit, hiring, and resource distribution are increasingly subject to regulatory oversight from policies such as the EU AI Act and GDPR. Current fairness governance practices rely on observational fairness metrics, post-hoc explainability, and immutable audit logs, but provide limited support for causal attribution and efficient evidentiary verification. We introduce Causal Evidentiary Governance (CEG), a framework in which regulated institutions commit to a versioned directed acyclic graph (DAG) that partitions causal pathways into allowable and disallowed groups. The Causal Harm Rate measures prediction variation attributable to disallowed causal pathways. Each decision is accompanied by a signed Decision-Evidence Packet (DEP), cryptographically binding the prediction to a digest of the published DAG and path-specific attributions. DEP digests can be appended to a Merkle tree to enable logarithmic-cost inclusion proofs. We validate CEG through a two-layer empirical methodology using demographic summaries from four years of PMA credit supervisory data to construct 10,000 synthetic credit applicants across four strategic DAG counterfactuals. Ca"
+        }
+      ],
+      "new_sources": 5,
+      "dropped_for_budget": 0,
+      "trimmed_for_budget": 0,
+      "retries": []
+    },
+    {
+      "type": "plan",
+      "index": 3,
+      "duration_ms": 335,
+      "tools_offered": "- wikipedia: Encyclopedia articles. Best for definitions, how institutions and mechanisms work, history and general background. Query: a short topic name (2-5 words).\n- arxiv: Academic papers (abstracts, authors, dates). Best for research literature and 'recent papers' questions. Query: 3-6 topical keywords, no filler words.\n    option recent (bool): true to sort newest first instead of by relevance\n- fred: FRED (Federal Reserve Economic Data): CURRENT and historical US economic statistics, with the latest value, the value a year earlier and the change. Use it for questions about the current or recent level of a statistic. Query: a FRED series ID, or keywords to search for one. Common IDs: UNRATE unemployment rate; FEDFUNDS federal funds rate; DPCREDIT discount window primary credit rate; DGS10 and DGS2 10- and 2-year Treasury yields; T10Y2Y and T10Y3M yield curve spreads (negative means inverted); CPIAUCSL consumer price index; GDP nominal and GDPC1 real GDP; PAYEMS nonfarm payrolls; MORTGAGE30US 30-year mortgage rate; USREC recession indicator. Needs a free API key.\n    option years (int): years back to compare the latest value with (default 1)",
+      "action": "search",
+      "steps_left": 2,
+      "log_shown": "step 1: search arxiv query='machine learning credit risk assessment' options={'recent': True} -> [A1] A Capability Framework for Evaluating Agentic AI Platforms i; [A2] Conditional Weight of Evidence for Gradient-Boosted Credit M; [A3] Trusted financial data for agentic commerce: A multi-agent f; [A4] A Functional Representation of Credit Behavior for Probabili; [A5] Causal Evidentiary Governance for High-Risk Machine Learning",
+      "reasoning": "",
+      "tool": "arxiv",
+      "query": "machine learning credit risk assessment",
+      "options": {
+        "recent": true
+      },
+      "fell_back_to_default": false,
+      "llm_attempts": [
+        {
+          "purpose": "plan",
+          "model": "openai/gpt-oss-20b",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You plan research for a bank's research team, one step at a time.\nTools:\n- wikipedia: Encyclopedia articles. Best for definitions, how institutions and mechanisms work, history and general background. Query: a short topic name (2-5 words).\n- arxiv: Academic papers (abstracts, authors, dates). Best for research literature and 'recent papers' questions. Query: 3-6 topical keywords, no filler words.\n    option recent (bool): true to sort newest first instead of by relevance\n- fred: FRED (Federal Reserve Economic Data): CURRENT and historical US economic statistics, with the latest value, the value a year earlier and the change. Use it for questions about the current or recent level of a statistic. Query: a FRED series ID, or keywords to search for one. Common IDs: UNRATE unemployment rate; FEDFUNDS federal funds rate; DPCREDIT discount window primary credit rate; DGS10 and DGS2 10- and 2-year Treasury yields; T10Y2Y and T10Y3M yield curve spreads (negative means inverted); CPIAUCSL consumer price index; GDP nominal and GDPC1 real GDP; PAYEMS nonfarm payrolls; MORTGAGE30US 30-year mortgage rate; USREC recession indicator. Needs a free API key.\n    option years (int): years back to compare the latest value with (default 1)\n\nWhat has been done so far:\nstep 1: search arxiv query='machine learning credit risk assessment' options={'recent': True} -> [A1] A Capability Framework for Evaluating Agentic AI Platforms i; [A2] Conditional Weight of Evidence for Gradient-Boosted Credit M; [A3] Trusted financial data for agentic commerce: A multi-agent f; [A4] A Functional Representation of Credit Behavior for Probabili; [A5] Causal Evidentiary Governance for High-Risk Machine Learning\n\nYou may make at most 2 more search(es). Choose the next action:\n- search: call ONE tool. Give tool, query and options.\n- finish: the evidence gathered so far is enough to answer. Only valid once at least one source has been found.\n- refuse: the question is unrelated to banking, finance, economics or their research literature. Only valid before any source has been found.\n\nReply with a JSON object: action, reasoning (one sentence: why), tool, query, options (an object; {} if none).\nWrite queries as short keywords, not full sentences. For wikipedia, name the article you expect\n(for example \"Basel III\" or \"Discount window\"), not a description of the topic.\nIf an earlier search found nothing or the wrong thing, change it: different words, a different article\ntitle, or a different tool. Repeating a query returns the same thing.\nChoose finish as soon as the evidence covers what the question asks; do not search just to confirm.\nIf the question needs more than one kind of source (for example a definition and recent papers), use a different tool for each.\nNever repeat a search that is already listed."
+            },
+            {
+              "role": "user",
+              "content": "What recent academic research exists on using machine learning for credit risk assessment?"
+            }
+          ],
+          "reply": "{\"action\":\"search\",\"tool\":\"arxiv\",\"query\":\"machine learning credit risk assessment\",\"options\":{\"recent\":true}}",
+          "problem": null,
+          "duration_ms": 334,
+          "prompt_tokens": 855,
+          "completion_tokens": 60,
+          "waited_ms": 0,
+          "retries": 0,
+          "retry_log": []
+        }
+      ]
+    },
+    {
+      "type": "tool",
+      "index": 4,
+      "duration_ms": 0,
+      "tool": "arxiv",
+      "role": "planned",
+      "query": "machine learning credit risk assessment",
+      "options": {
+        "recent": true
+      },
+      "status": "skipped",
+      "error": "repeat of step 1",
+      "sources": [],
+      "new_sources": 0,
+      "dropped_for_budget": 0,
+      "trimmed_for_budget": 0,
+      "retries": []
+    },
+    {
+      "type": "synthesis",
+      "index": 5,
+      "duration_ms": 21703,
+      "evidence_ids": [
+        "A1",
+        "A2",
+        "A3",
+        "A4",
+        "A5"
+      ],
+      "llm_attempts": [
+        {
+          "purpose": "answer",
+          "model": "openai/gpt-oss-20b",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are a careful research assistant for a bank's research team.\nAnswer the question using ONLY the sources provided. Each source has an evidence ID like [W1] or [A2].\nReturn JSON with:\n- claims: each claim is one statement taken from the sources (text) and the evidence IDs that\n  directly support it (evidence_ids, e.g. [\"W1\", \"A2\"]). Use only IDs that appear in the sources.\n  Make each claim ONE atomic fact: if several facts have different figures or dates, write\n  several claims. Be concise: give the facts that answer the question (for a statistic, the\n  latest value, the earlier value and the change), not a list of every data point. Do not write citation markers like [W1] inside text. Do not put anything here that the\n  sources do not say; use exact figures from the sources.\n- inferences: your own reasoning or conclusions that go beyond the sources, one per item.\n- caveats: limits of the evidence (gaps, age of sources, what is missing).\n- refusal_reason: \"\" when the sources answer the whole question. If they answer only PART of it\n  (for example one half of a comparison), still return the claims they support and use\n  refusal_reason to say plainly what is missing. If nothing relevant is in the sources, return\n  no claims and explain why. Never invent facts, figures or sources."
+            },
+            {
+              "role": "user",
+              "content": "Question: What recent academic research exists on using machine learning for credit risk assessment?\n\nSources:\n[A1] A Capability Framework for Evaluating Agentic AI Platforms in Regulated Enterprises (https://arxiv.org/abs/2611.24039v1) published 2026-11-18\nAgentic AI platforms-systems in which LLM agents plan, invoke tools, retain memory and coordinate to change the state of enterprise systems-are being procured faster than they can be measured. Public agent benchmarks score models in fixed harnesses; enterprises buy integrated platforms whose orchestration, memory, governance and tooling layers dominate outcomes, and they buy them largely on the strength of vendor demonstrations. We report an industrial evaluation programme (\"bakeoff\") run by the innovation laboratory of a global bank in which ten platforms-spanning open-source frameworks, proprietary products and hyperscaler ecosystems-were assessed by a cross-functional panel on nine capability dimensions across three financial-services workloads: counterparty credit risk, retrieval-augmented generation and process automation. Scores separate the field into three tiers that are stable under alternative weightings, and surface workload-specific strengths that aggregates hide. A secondary analysis, however, finds Cronbach's alpha = 0.98 across nominally distinct dimensions and rank correlations >= 0.93 with the total for eight of nine: a halo effect indicating that demonstration-bas\n\n[A2] Conditional Weight of Evidence for Gradient-Boosted Credit Models: Estimation, Additivity and Its Relation to Adverse Action Reasons (https://arxiv.org/abs/2610.24586v1) published 2026-10-17\nTraditional weight of evidence assigns a credit characteristic a value based on its association with default across a population. Credit analysis also requires an assessment of that characteristic in the context of an individual applicant's record. We study conditional weight of evidence for this purpose. It measures the change in default log odds from observing a characteristic after the remaining credit information is known. Its sign identifies whether the characteristic adds adverse or favorable information for that applicant, and its magnitude measures the strength of that information. The same characteristic value can therefore receive different assessments for applicants with different payment histories or other credit attributes. We develop estimators using gradient-boosted trees and evaluate their accuracy in a bureau-style simulation. Regressions of the full model's predicted probabilities recover conditional evidence more accurately than separate models fitted to default outcomes, provided the full model is accurate. They also recover a deliberately constructed file-age effect whose direction varies with utilization and is often missed by marginal weight of evidence. Loca\n\n[A3] Trusted financial data for agentic commerce: A multi-agent framework for credit risk, fraud detection, and secure payment decisions (https://arxiv.org/abs/2611.18651v1) published 2026-10-16\nFinancial institutions increasingly require intelligent risk-management systems that combine predictive performance with data reliability, interpretability, and adaptable decision policies for emerging agentic commerce environments. This study proposes a Trusted Financial Data (TFD) Multi-Agent Framework that integrates predictive risk modeling, behavioral intelligence, data-trust assessment, explainable artificial intelligence, and uncertainty-aware decision orchestration for credit-default and payment-fraud management. The framework translates heterogeneous risk and trust signals into interpretable Approve, Review, and Decline decisions using fixed and adaptive decision policies. Experimental evaluation was conducted on the Home Credit Default Risk and IEEE-CIS Fraud Detection datasets against five machine-learning baselines: Logistic Regression, Random Forest, XGBoost, LightGBM, and Multi-Layer Perceptron. Adaptive TFD achieved recall values of 0.6234 and 0.9366, with ROC-AUC values of 0.7584 and 0.9474 on Home Credit and IEEE-CIS, respectively. Adaptive orchestration consistently improved minority-class risk detection relative to fixed TFD policies, although at the cost of incr\n\n[A4] A Functional Representation of Credit Behavior for Probability of Default Modeling (https://arxiv.org/abs/2610.07888v2) published 2026-10-06\nThis paper proposes a framework for modeling probability of default via functional data analysis. By representing a series of credit variables as functions, we investigate whether intra-monthly information improves default predictability in linear models. We further show how a range of widely used variables, among them available funds, utilization rate, and overdraft, can all be derived from three quantities observed over time. Namely, 1) the type of each account, 2) the balance of the account, and 3) the size of the credit limit on the account. Retaining these quantities as continuous-time processes, rather than reducing them to monthly aggregated values, yields a continuous faithful representation of the borrower. When analyzing these three processes, we discovered that recurring events associated with the ordinal position among banking days created strong cyclical patterns. We therefore develop a relative time framework that aligns the recurring events across borrowers, ensuring that borrowers possess the same cyclical pattern, regardless of real time. We assess the framework using functional logistic regression. This approach accommodates the continuous representation while rem\n\n[A5] Causal Evidentiary Governance for High-Risk Machine Learning Systems (https://arxiv.org/abs/2609.01040v1) published 2026-09-01\nMachine learning systems deployed for credit, hiring, and resource distribution are increasingly subject to regulatory oversight from policies such as the EU AI Act and GDPR. Current fairness governance practices rely on observational fairness metrics, post-hoc explainability, and immutable audit logs, but provide limited support for causal attribution and efficient evidentiary verification. We introduce Causal Evidentiary Governance (CEG), a framework in which regulated institutions commit to a versioned directed acyclic graph (DAG) that partitions causal pathways into allowable and disallowed groups. The Causal Harm Rate measures prediction variation attributable to disallowed causal pathways. Each decision is accompanied by a signed Decision-Evidence Packet (DEP), cryptographically binding the prediction to a digest of the published DAG and path-specific attributions. DEP digests can be appended to a Merkle tree to enable logarithmic-cost inclusion proofs. We validate CEG through a two-layer empirical methodology using demographic summaries from four years of PMA credit supervisory data to construct 10,000 synthetic credit applicants across four strategic DAG counterfactuals. Ca"
+            }
+          ],
+          "reply": "{\"claims\":[{\"text\":\"A multi-agent framework called Trusted Financial Data (TFD) integrates predictive risk modeling, behavioral intelligence, data-trust assessment, explainable AI, and uncertainty-aware decision orchestration for credit-default and payment-fraud management.\",\"evidence_ids\":[\"A3\"]},{\"text\":\"Adaptive TFD achieved recall values of 0.6234 and 0.9366, with ROC-AUC values of 0.7584 and 0.9474 on the Home Credit Default Risk and IEEE-CIS Fraud Detection datasets, respectively.\",\"evidence_ids\":[\"A3\"]},{\"text\":\"A functional representation of credit behavior uses functional data analysis to model probability of default, representing credit variables as continuous-time processes and applying functional logistic regression.\",\"evidence_ids\":[\"A4\"]},{\"text\":\"Conditional weight of evidence for gradient-boosted credit models measures the change in default log odds from observing a characteristic after the remaining credit information is known, and gradient-boosted trees can estimate this metric accurately.\",\"evidence_ids\":[\"A2\"]},{\"text\":\"An industrial evaluation program (bakeoff) assessed ten agentic AI platforms on counterparty credit risk, revealing that platform performance can be ranked across nine capability dimensions, with high Cronbach's alpha and strong rank correlations indicating a halo effect.\",\"evidence_ids\":[\"A1\"]},{\"text\":\"Causal Evidentiary Governance (CEG) introduces a framework for regulated institutions to commit to a versioned directed acyclic graph (DAG) partitioning causal pathways into allowable and disallowed groups, measuring prediction variation attributable to disallowed pathways via the Causal Harm Rate.\",\"evidence_ids\":[\"A5\"]}],\"inferences\":[],\"caveats\":[\"The sources focus on specific frameworks or evaluation studies; broader literature on machine learning for credit risk assessment is not covered.\",\"The performance metrics reported are from specific datasets and may not generalize to all credit risk contexts.\"],\"refusal_reason\":\"\"}",
+          "problem": null,
+          "duration_ms": 21695,
+          "prompt_tokens": 1876,
+          "completion_tokens": 425,
+          "waited_ms": 20860,
+          "retries": 0,
+          "retry_log": []
+        }
+      ],
+      "repaired": false,
+      "sourced": [
+        {
+          "text": "A multi-agent framework called Trusted Financial Data (TFD) integrates predictive risk modeling, behavioral intelligence, data-trust assessment, explainable AI, and uncertainty-aware decision orchestration for credit-default and payment-fraud management.",
+          "evidence_ids": [
+            "A3"
+          ]
+        },
+        {
+          "text": "Adaptive TFD achieved recall values of 0.6234 and 0.9366, with ROC-AUC values of 0.7584 and 0.9474 on the Home Credit Default Risk and IEEE-CIS Fraud Detection datasets, respectively.",
+          "evidence_ids": [
+            "A3"
+          ]
+        },
+        {
+          "text": "A functional representation of credit behavior uses functional data analysis to model probability of default, representing credit variables as continuous-time processes and applying functional logistic regression.",
+          "evidence_ids": [
+            "A4"
+          ]
+        },
+        {
+          "text": "Conditional weight of evidence for gradient-boosted credit models measures the change in default log odds from observing a characteristic after the remaining credit information is known, and gradient-boosted trees can estimate this metric accurately.",
+          "evidence_ids": [
+            "A2"
+          ]
+        },
+        {
+          "text": "An industrial evaluation program (bakeoff) assessed ten agentic AI platforms on counterparty credit risk, revealing that platform performance can be ranked across nine capability dimensions, with high Cronbach's alpha and strong rank correlations indicating a halo effect.",
+          "evidence_ids": [
+            "A1"
+          ]
+        },
+        {
+          "text": "Causal Evidentiary Governance (CEG) introduces a framework for regulated institutions to commit to a versioned directed acyclic graph (DAG) partitioning causal pathways into allowable and disallowed groups, measuring prediction variation attributable to disallowed pathways via the Causal Harm Rate.",
+          "evidence_ids": [
+            "A5"
+          ]
+        }
+      ],
+      "unverified": [],
+      "inferences": [],
+      "caveats": [
+        "The sources focus on specific frameworks or evaluation studies; broader literature on machine learning for credit risk assessment is not covered.",
+        "The performance metrics reported are from specific datasets and may not generalize to all credit risk contexts."
+      ],
+      "refusal_reason": ""
+    }
+  ]
+}

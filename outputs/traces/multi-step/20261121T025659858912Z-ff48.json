@@ -1,0 +1,15 @@
+{
+  "run_id": "20261121T025659858912Z-ff48",
+  "started_at": "2026-11-21T02:56:59+00:00",
+  "question": "How did the Federal Reserve's monetary policy response to the 2008 financial crisis differ from its response to COVID-19?",
+  "outcome": "error",
+  "mode": "multi-step",
+  "max_steps": 3,
+  "stop_reason": "",
+  "error": "LLMError: Groq API error 400: {\"error\":{\"message\":\"Tool choice is none, but model called a tool\",\"type\":\"invalid_request_error\",\"code\":\"tool_use_failed\",\"failed_generation\":\"{\\\"name\\\": \\\"search\\\", \\\"arguments\\\": {\\\"action\\\":\\\"search\\\",\\\"reasoning\\\":\\\"Need Fed policy descriptions for 2008 and COVID\\\",\\\"tool\\\":\\\"wikipedia\\\",\\\"quer",
+  "duration_ms": 518,
+  "model": "openai/gpt-oss-20b",
+  "notices": [],
+  "answer": "",
+  "steps": []
+}

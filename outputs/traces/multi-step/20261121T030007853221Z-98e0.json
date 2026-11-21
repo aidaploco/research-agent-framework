@@ -1,0 +1,15 @@
+{
+  "run_id": "20261121T030007853221Z-98e0",
+  "started_at": "2026-11-21T03:00:07+00:00",
+  "question": "How did the Federal Reserve's monetary policy response to the 2008 financial crisis differ from its response to COVID-19?",
+  "outcome": "error",
+  "mode": "multi-step",
+  "max_steps": 3,
+  "stop_reason": "",
+  "error": "LLMError: Groq API error 429: {\"error\":{\"message\":\"Rate limit reached for model `openai/gpt-oss-20b` in organization `org_01m7xr9kf5en2a4b7gsyw4sgvb` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Used 7116, Requested 1068. Please try again in 1.38s. Need more tokens? Upgrade to Dev Tier today at https://consol",
+  "duration_ms": 2304,
+  "model": "openai/gpt-oss-20b",
+  "notices": [],
+  "answer": "",
+  "steps": []
+}

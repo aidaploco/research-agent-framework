@@ -19,7 +19,7 @@ class WikipediaTool(Tool):
         "history and general background. Query: a short topic name (2-5 words)."
     )
 
-    def __init__(self, max_results: int = 2, max_chars: int = 8000, other_chars: int = 3000):
+    def __init__(self, max_results: int = 3, max_chars: int = 8000, other_chars: int = 3000):
         # The top article gets the larger budget: key facts often sit past the first few
         # thousand characters (Basel III's capital ratios start near character 4,300).
         # The token limit on the free LLM tier keeps the total bounded.
@@ -85,6 +85,20 @@ class WikipediaTool(Tool):
             return self._source(page["title"], text, self.max_chars)
         return None
 
+    def _extract(self, pageid: int) -> tuple[str, str] | None:
+        """The (title, full plain-text extract) of one page, or None if it has no text.
+
+        One request per page, on purpose: for whole-article text the API lowers `exlimit` to 1,
+        so a request for several pages returns text for just one of them, and not the first
+        one asked for.
+        """
+        pages = self._get(
+            {"action": "query", "prop": "extracts", "explaintext": 1, "pageids": pageid}
+        )["query"]["pages"]
+        page = pages.get(str(pageid), {})
+        text = (page.get("extract") or "").strip()
+        return (page["title"], text) if text else None
+
     def _search(self, query: str) -> list[Source]:
         sources: list[Source] = []
         exact = self._title_lookup(query)
@@ -95,22 +109,13 @@ class WikipediaTool(Tool):
                 "action": "query",
                 "list": "search",
                 "srsearch": query,
-                "srlimit": self.max_results,
+                "srlimit": self.max_results + 1,  # one spare: the exact title may repeat a hit
             }
         )["query"]["search"]
-        if hits:
-            pages = self._get(
-                {
-                    "action": "query",
-                    "prop": "extracts",
-                    "explaintext": 1,
-                    "pageids": "|".join(str(h["pageid"]) for h in hits),
-                    "exlimit": self.max_results,
-                }
-            )["query"]["pages"]
-            for h in hits:  # keep Wikipedia's ranking order
-                p = pages.get(str(h["pageid"]), {})
-                text = (p.get("extract") or "").strip()
-                if text and all(p["title"] != s.title for s in sources):
-                    sources.append(self._source(p["title"], text, self.other_chars))
-        return sources[: self.max_results]
+        for hit in hits:  # Wikipedia's ranking order
+            if len(sources) >= self.max_results:
+                break
+            found = self._extract(hit["pageid"])
+            if found and all(found[0] != s.title for s in sources):
+                sources.append(self._source(found[0], found[1], self.other_chars))
+        return sources

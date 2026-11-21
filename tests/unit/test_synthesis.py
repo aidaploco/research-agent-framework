@@ -265,3 +265,30 @@ def test_the_demoted_inference_is_rendered_under_unverified():
 
 def test_the_prompt_asks_for_concise_answers_not_every_data_point():
     assert "Be concise" in synthesis.SYSTEM and "not a list of every data point" in synthesis.SYSTEM
+
+
+def test_sources_lists_cited_first_and_separates_retrieved_but_uncited():
+    result = Synthesis(sourced=[Claim(text="Fact.", evidence_ids=["A1"])])
+    out = render(result, make_store())  # the store holds W1 and A1
+    cited, rest = out.split("## Retrieved but not cited")
+    assert (
+        "[A1] Credit models (arXiv:2501.1)" in cited and "[W1]" not in cited.split("## Sources")[1]
+    )
+    assert "[W1] Discount window" in rest
+    assert out.index("## Sources") < out.index("## Retrieved but not cited")
+
+
+def test_no_retrieved_but_uncited_section_when_everything_was_cited():
+    result = Synthesis(
+        sourced=[
+            Claim(text="Fact.", evidence_ids=["W1"]),
+            Claim(text="Other.", evidence_ids=["A1"]),
+        ]
+    )
+    assert "Retrieved but not cited" not in render(result, make_store())
+
+
+def test_a_run_that_cited_nothing_says_so_and_still_lists_what_it_retrieved():
+    out = render(Synthesis(refusal_reason="Nothing relevant."), make_store())
+    assert "## Sources\n(none cited)" in out
+    assert "## Retrieved but not cited" in out and "[W1] Discount window" in out

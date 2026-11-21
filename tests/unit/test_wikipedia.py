@@ -20,31 +20,60 @@ def fast(monkeypatch):
 
 
 def test_search_returns_ranked_sources_with_urls(monkeypatch):
-    calls = []
-
-    def fake_get(url, **kwargs):
-        calls.append(kwargs["params"])
-        if "titles" in kwargs["params"]:
-            return FakeResponse(MISSING)
-        if kwargs["params"].get("list") == "search":
-            return FakeResponse({"query": {"search": [{"pageid": 1}, {"pageid": 2}]}})
-        return FakeResponse(
-            {
-                "query": {
-                    "pages": {
-                        "1": {"title": "Discount window", "extract": "A" * 10},
-                        "2": {"title": "Federal Reserve", "extract": "B" * 10},
-                    }
-                }
-            }
-        )
-
-    monkeypatch.setattr(wikipedia.requests, "get", fake_get)
+    log = []
+    fake = make_fake(
+        MISSING["query"]["pages"]["-1"],
+        [{"pageid": 1}, {"pageid": 2}],
+        {
+            "1": {"title": "Discount window", "extract": "A" * 10},
+            "2": {"title": "Federal Reserve", "extract": "B" * 10},
+        },
+        log,
+    )
+    monkeypatch.setattr(wikipedia.requests, "get", fake)
     sources = WikipediaTool().run("discount window")
     assert [s.title for s in sources] == ["Discount window", "Federal Reserve"]
     assert sources[0].url == "https://en.wikipedia.org/wiki/Discount_window"
     assert sources[0].tool == "wikipedia"
-    assert len(calls) == 3  # title lookup, search, extracts
+    assert len(log) == 4  # title lookup, search, then one extract request per hit
+
+
+def test_every_top_hit_gets_its_text_in_rank_order_despite_the_one_page_quirk(monkeypatch):
+    # Regression: the tool used to request all extracts in one call; the API returns just one page
+    # for that, so most hits silently had no text (found when a reference question refused).
+    log = []
+    fake = make_fake(
+        MISSING["query"]["pages"]["-1"],
+        [{"pageid": 10}, {"pageid": 20}, {"pageid": 30}, {"pageid": 40}],
+        {str(i): {"title": f"Article {i}", "extract": f"text {i}"} for i in (10, 20, 30, 40)},
+        log,
+    )
+    monkeypatch.setattr(wikipedia.requests, "get", fake)
+    sources = WikipediaTool().run("a question")
+    assert [s.title for s in sources] == ["Article 10", "Article 20", "Article 30"]  # the top three
+    extract_requests = [p for p in log if "pageids" in p]
+    assert [p["pageids"] for p in extract_requests] == [
+        10,
+        20,
+        30,
+    ]  # one page per request, in order
+
+
+def test_a_third_ranked_article_is_found(monkeypatch):
+    fake = make_fake(
+        MISSING["query"]["pages"]["-1"],
+        [{"pageid": 1}, {"pageid": 2}, {"pageid": 3}],
+        {
+            "1": {"title": "2008 financial crisis", "extract": "a"},
+            "2": {"title": "Causes of the Great Recession", "extract": "b"},
+            "3": {"title": "Federal Reserve responses to the subprime crisis", "extract": "c"},
+        },
+    )
+    monkeypatch.setattr(wikipedia.requests, "get", fake)
+    titles = [
+        s.title for s in WikipediaTool().run("Federal Reserve response to the financial crisis")
+    ]
+    assert "Federal Reserve responses to the subprime crisis" in titles
 
 
 def test_no_hits_returns_empty(monkeypatch):
@@ -70,14 +99,12 @@ def test_top_article_gets_larger_budget_than_others(monkeypatch):
 
 
 def test_text_is_truncated(monkeypatch):
-    def fake_get(url, **kwargs):
-        if "titles" in kwargs["params"]:
-            return FakeResponse(MISSING)
-        if kwargs["params"].get("list") == "search":
-            return FakeResponse({"query": {"search": [{"pageid": 1}]}})
-        return FakeResponse({"query": {"pages": {"1": {"title": "T", "extract": "x" * 9000}}}})
-
-    monkeypatch.setattr(wikipedia.requests, "get", fake_get)
+    fake = make_fake(
+        MISSING["query"]["pages"]["-1"],
+        [{"pageid": 1}],
+        {"1": {"title": "T", "extract": "x" * 9000}},
+    )
+    monkeypatch.setattr(wikipedia.requests, "get", fake)
     assert len(WikipediaTool(max_chars=100, other_chars=100).run("t")[0].text) == 100
 
 
@@ -94,14 +121,25 @@ def test_network_failure_becomes_tool_error(monkeypatch):
         raise AssertionError("expected ToolError")
 
 
-def make_fake(title_page, search_hits, pages):
+def make_fake(title_page, search_hits, pages, requests_log=None):
+    """A fake MediaWiki API that behaves like the real one where it matters.
+
+    For whole-article text the real API lowers `exlimit` to 1: asked for several pages at once it
+    returns text for just one of them (and not the first). The fake reproduces that, so a tool
+    that batches its extract requests gets the wrong pages here, as it did in production.
+    """
+
     def fake_get(url, **kwargs):
         p = kwargs["params"]
+        if requests_log is not None:
+            requests_log.append(p)
         if "titles" in p:
             return FakeResponse({"query": {"pages": {"1": title_page}}})
         if p.get("list") == "search":
             return FakeResponse({"query": {"search": search_hits}})
-        return FakeResponse({"query": {"pages": pages}})
+        ids = str(p["pageids"]).split("|")
+        keep = ids[-1:]  # the quirk: one page, and not the top-ranked one
+        return FakeResponse({"query": {"pages": {i: pages[i] for i in keep if i in pages}}})
 
     return fake_get
 
