@@ -686,3 +686,48 @@ uv run ruff check . --fix -q; uv run ruff format . -q; uv run ruff format --chec
   gpt-oss-120b
 - Add pydantic dependency" &amp;&amp; git log -1 --format='%h %an | %s'" completed (exit code 0)</summary>
 </task-notification>
+
+## [2026-11-20 19:38:27] Response
+
+M3 is built and committed on `m3-structured-synthesis`, in three commits. It isn't pushed, and there's no PR yet. I merged PR #2 first, with a merge commit. Lint passes and all 59 unit tests pass. I ran four of the eight reference questions live: Q1, Q2, Q3 and Q7.
+
+**The three commits**
+1. `09e39d9`, a refactor. `Plan`, `Source` and tool options are now Pydantic models. Each tool declares an `id_prefix` and an options model. A new `llm.structured()` sends a JSON schema, validates the reply, runs an optional check, and retries once.
+2. `300b08c`, the feature:
+   - **Evidence IDs:** every retrieved source gets an ID such as `W1` or `A2`.
+   - **Structured claims:** the model returns claims as `{text, evidence_ids}`, plus inferences, caveats and a refusal reason.
+   - **Code does the citing:** it writes the `[W1][A2]` markers and strips any the model writes, so the `【1†L1-L4】` artifacts are gone.
+   - **ID validation:** an unknown or missing ID gets one repair retry, then the claim is demoted to an "Unverified" section, never dropped.
+   - **Number check:** figures of two or more digits, decimals and percentages must appear in the cited source.
+   - **Out of scope:** the planner's `none` refuses without calling the model.
+3. `a74ea78`, docs. The README explains the demotion policy and your reasoning for it. PLAN.md records the decisions.
+
+**Live results**
+- **Q1, discount window:** every claim cited `[W1]` and passed.
+- **Q2, Basel III:** it now answers with grounded figures (4.5% CET1, 2.5% buffer, 6% Tier 1, 3% leverage, 100% LCR). It refused before this milestone.
+- **Q3, credit-risk research:** five arXiv papers with IDs. Specific figures such as ROC-AUC 0.7584 matched the abstracts.
+- **Q7, restaurant:** it refused with no tool or model call.
+
+**Bugs I found and fixed along the way**
+- **Number words:** my grounding check wrongly demoted a correct claim. The source said "thirty days" and the model wrote `30`. The check now matches spelled-out numbers.
+- **Wikipedia ranking:** Wikipedia's search ranks an exact title like "Basel III" below pages that only mention it. The tool now looks up the exact title first. The planner prompt also asks for exact article names.
+- **Truncation:** the Basel III capital figures start past character 4,000, so Q2 refused. The top article now gets 8,000 characters and the others 3,000.
+- **Wikipedia 429s:** Wikipedia also rate-limited me with HTTP 429s, so the tool now retries with backoff.
+
+**Limits you should know about**
+- **Grounding check is shallow:** it confirms a number appears in the cited source. It doesn't confirm the number is attached to the right fact. Single-digit numbers aren't checked, and an occasional correct claim can still be demoted. The README says this.
+- **arXiv:** it timed out on one run, and the tool reported it as an error without crashing.
+- **Not run live:** I haven't run Q4, Q5, Q6 or Q8. Q4 and Q6 need the M5 loop.
+- **CI:** nothing is pushed, so CI hasn't run.
+
+Do you want me to push the branch and open a PR?
+
+---
+
+## [2026-11-20 19:43:05] Prompt
+
+are the tests calling live APIs? you should use fake LLM and search providers. 
+
+for the grounding check, normalise the formats before comparing. can we also check if the number appears near a keyword from the claim to fix the confirmation of the number and right fact?
+
+for arxiv, does the agent say that arxiv is down and that it answered from wikipedia? and does it implement a retry with a short backoff and timeout?

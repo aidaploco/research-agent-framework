@@ -1,6 +1,4 @@
-import json
-
-from research_agent import llm, synthesis
+from research_agent import synthesis
 from research_agent.evidence import EvidenceStore
 from research_agent.synthesis import (
     Answer,
@@ -14,6 +12,7 @@ from research_agent.synthesis import (
     synthesize,
 )
 from research_agent.tools.base import Source
+from tests.fakes import answer_json
 
 
 def make_store():
@@ -109,44 +108,26 @@ def test_comma_joined_ids_in_one_string_are_accepted():
     assert result.sourced[0].evidence_ids == ["W1", "A1"]
 
 
-def sent(monkeypatch, *replies):
-    seen = []
-    it = iter(replies)
-    monkeypatch.setattr(llm, "chat", lambda m, **k: seen.append(m) or next(it))
-    return seen
-
-
-def payload(*claims, refusal=""):
-    return json.dumps(
-        {
-            "claims": [{"text": t, "evidence_ids": ids} for t, ids in claims],
-            "inferences": [],
-            "caveats": [],
-            "refusal_reason": refusal,
-        }
-    )
-
-
-def test_synthesize_repairs_unknown_id_once(monkeypatch):
-    seen = sent(
-        monkeypatch,
-        payload(("Priced about 100 basis points.", ["W7"])),
-        payload(("Priced about 100 basis points.", ["W1"])),
+def test_synthesize_repairs_unknown_id_once(fake_llm):
+    fake_llm.queue(
+        answer_json(("Priced about 100 basis points.", ["W7"])),
+        answer_json(("Priced about 100 basis points.", ["W1"])),
     )
     result = synthesize("q", make_store())
     assert result.sourced and not result.unverified
-    assert "Valid evidence IDs: ['W1', 'A1']" in seen[1][-1]["content"]
+    assert "Valid evidence IDs: ['W1', 'A1']" in fake_llm.last_user_message
 
 
-def test_synthesize_demotes_when_repair_fails(monkeypatch):
-    sent(monkeypatch, *[payload(("Unsupported.", ["W7"]))] * 2)
+def test_synthesize_demotes_when_repair_fails(fake_llm):
+    fake_llm.always(answer_json(("Unsupported.", ["W7"])))
     result = synthesize("q", make_store())
     assert result.sourced == []
     assert result.unverified[0].text == "Unsupported."  # kept, not dropped
+    assert len(fake_llm.calls) == 2
 
 
-def test_synthesize_reports_unparseable_model_output(monkeypatch):
-    sent(monkeypatch, "nope", "still nope")
+def test_synthesize_reports_unparseable_model_output(fake_llm):
+    fake_llm.always("nope")
     result = synthesize("q", make_store())
     assert "valid structured answer" in result.refusal_reason
 

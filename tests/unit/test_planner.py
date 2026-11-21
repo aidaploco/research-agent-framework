@@ -1,16 +1,10 @@
-import json
-
 import pytest
 
-from research_agent import llm
 from research_agent.planner import Plan, check_plan, make_plan
 from research_agent.tools.registry import default_registry
+from tests.fakes import plan_json
 
 REG = default_registry()
-
-
-def reply(**kw):
-    return json.dumps({"reasoning": "r", "tool": "wikipedia", "query": "q", "options": {}, **kw})
 
 
 def test_valid_plan_passes_and_options_are_coerced():
@@ -39,37 +33,28 @@ def test_check_plan_reports_problems(plan, expected):
     assert expected in check_plan(plan, REG)
 
 
-def test_make_plan_sends_schema_and_returns_plan(monkeypatch):
-    seen = {}
-
-    def fake_chat(messages, **kw):
-        seen.update(kw)
-        return reply(query="discount window")
-
-    monkeypatch.setattr(llm, "chat", fake_chat)
+def test_make_plan_sends_schema_and_returns_plan(fake_llm):
+    fake_llm.queue(plan_json(query="discount window"))
     plan = make_plan("q", REG)
     assert plan.query == "discount window"
-    assert seen["response_format"]["json_schema"]["strict"] is False
+    assert fake_llm.calls[0]["response_format"]["json_schema"]["strict"] is False
+    assert "wikipedia" in fake_llm.calls[0]["messages"][0]["content"]  # prompt lists the tools
 
 
-def test_make_plan_repairs_after_bad_reply(monkeypatch):
-    replies = iter(["not json", reply(query="discount window")])
-    seen = []
-    monkeypatch.setattr(llm, "chat", lambda m, **k: seen.append(m) or next(replies))
+def test_make_plan_repairs_after_bad_reply(fake_llm):
+    fake_llm.queue("not json", plan_json(query="discount window"))
     assert make_plan("q", REG).query == "discount window"
-    assert "not valid" in seen[1][-1]["content"]
+    assert "not valid" in fake_llm.last_user_message
 
 
-def test_make_plan_repairs_unknown_tool(monkeypatch):
-    replies = iter([reply(tool="google"), reply(tool="arxiv")])
-    seen = []
-    monkeypatch.setattr(llm, "chat", lambda m, **k: seen.append(m) or next(replies))
+def test_make_plan_repairs_unknown_tool(fake_llm):
+    fake_llm.queue(plan_json(tool="google"), plan_json(tool="arxiv"))
     assert make_plan("q", REG).tool == "arxiv"
-    assert "unknown tool" in seen[1][-1]["content"]
+    assert "unknown tool" in fake_llm.last_user_message
 
 
-def test_make_plan_falls_back_after_repeated_failure(monkeypatch):
-    monkeypatch.setattr(llm, "chat", lambda *a, **k: "garbage")
+def test_make_plan_falls_back_after_repeated_failure(fake_llm):
+    fake_llm.always("garbage")
     plan = make_plan("What is Basel III?", REG)
     assert (plan.tool, plan.query) == ("wikipedia", "What is Basel III?")
     assert "defaulting" in plan.reasoning
