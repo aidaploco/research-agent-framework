@@ -363,3 +363,27 @@ def test_an_ordinary_tool_failure_gets_no_live_data_clause(fake_llm, trace_dir):
         max_steps=1,
     )  # fmt: skip
     assert "No current figure" not in out
+
+
+def test_the_model_is_told_what_it_may_and_may_not_say_when_live_data_is_unavailable(
+    fake_llm, trace_dir
+):
+    out, _ = run(
+        fake_llm, trace_dir, [fred_tool(ToolError("no key")), wiki([page(1)])],
+        plan_json("fred", "UNRATE"), plan_json("wikipedia", "Unemployment rate"), finish_json(),
+        answer_json(("The rate is measured by a monthly survey.", ["W1"])),
+    )  # fmt: skip
+    told = fake_llm.last_user_message
+    assert "Do NOT state the current value" in told and "how it is measured" in told
+    assert "any specific value for any date" in told
+    assert (
+        "Do NOT state the current value" not in out
+    )  # an instruction for the model, not the reader
+
+
+def test_no_live_instruction_when_the_live_tool_worked(fake_llm, trace_dir):
+    run(
+        fake_llm, trace_dir, [fred_tool([source(url="https://f/1", tool="fred")])],
+        plan_json("fred", "UNRATE"), finish_json(), answer_json(("A fact.", ["F1"])),
+    )  # fmt: skip
+    assert "Do NOT state" not in fake_llm.last_user_message

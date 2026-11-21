@@ -27,7 +27,8 @@ class Source(BaseModel):
     meta: dict = Field(default_factory=dict)  # e.g. authors, published date
 
     def citation(self) -> str:
-        label = f"{self.title} ({self.native_id})" if self.native_id else self.title
+        has_id = self.native_id and f"({self.native_id})" not in self.title
+        label = f"{self.title} ({self.native_id})" if has_id else self.title
         return f"{label} - {self.url}"
 
 

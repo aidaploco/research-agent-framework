@@ -87,6 +87,15 @@ def _live_clause(registry: Registry, failed: dict[str, str]) -> str:
     return " ".join(LIVE_CLAUSE.format(tool=n) for n in failed if registry.get(n).live_data)
 
 
+LIVE_INSTRUCTION = (
+    "The {tool} tool, which has current figures, is unavailable. Do NOT state the current value of "
+    "the statistic, how it has changed recently, or any specific value for any date: the reader "
+    "could mistake an old figure for a current one. Give only general background on what the "
+    "statistic is and how it is measured (definitions, the survey or method, what is included), as "
+    "claims from the sources, and say in a caveat that this is general context that may be out of date."
+)
+
+
 @dataclass
 class StepOutcome:
     """What one search step did."""
@@ -161,6 +170,7 @@ class Research:
     stop_reason: str
     notices: list[str] = field(default_factory=list)
     refusal: str = ""  # set when the planner refused (the question is out of scope)
+    failed: dict[str, str] = field(default_factory=dict)  # every tool that failed -> why
 
 
 def research(question: str, registry: Registry, store: EvidenceStore, max_steps: int) -> Research:
@@ -208,6 +218,7 @@ def research(question: str, registry: Registry, store: EvidenceStore, max_steps:
         seen[key] = step
         outcome = run_step(plan, registry, store, allow_fallback=step == max_steps)
         failed |= set(outcome.failures)
+        out.failed.update(outcome.failures)
         if outcome.notice:
             out.notices.append(outcome.notice)
         log.append(_log_line(step, plan, outcome, store))
@@ -242,7 +253,8 @@ def answer(
             text = render(Synthesis(refusal_reason=found.refusal), store)
             run.finish("out_of_scope", text)
             return text
-        note = " ".join(found.notices)
+        live = [LIVE_INSTRUCTION.format(tool=n) for n in found.failed if registry.get(n).live_data]
+        note = " ".join(found.notices + live)  # the reader sees the notices; the model sees both
         result = synthesize(question, store, f"\n({note})" if note else "")
         result.notices = found.notices
         text = render(result, store)

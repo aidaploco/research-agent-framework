@@ -1,3 +1,4 @@
+from research_agent import synthesis
 from research_agent.evidence import EvidenceStore
 from research_agent.synthesis import (
     Answer,
@@ -260,3 +261,7 @@ def test_the_demoted_inference_is_rendered_under_unverified():
     out = render(result, fred_store())
     assert "## Unverified" in out and "The rate is about 3.9%." in out
     assert "## Model inference" not in out
+
+
+def test_the_prompt_asks_for_concise_answers_not_every_data_point():
+    assert "Be concise" in synthesis.SYSTEM and "not a list of every data point" in synthesis.SYSTEM

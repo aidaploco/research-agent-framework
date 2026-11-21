@@ -23,7 +23,8 @@ Return JSON with:
 - claims: each claim is one statement taken from the sources (text) and the evidence IDs that
   directly support it (evidence_ids, e.g. ["W1", "A2"]). Use only IDs that appear in the sources.
   Make each claim ONE atomic fact: if several facts have different figures or dates, write
-  several claims. Do not write citation markers like [W1] inside text. Do not put anything here that the
+  several claims. Be concise: give the facts that answer the question (for a statistic, the
+  latest value, the earlier value and the change), not a list of every data point. Do not write citation markers like [W1] inside text. Do not put anything here that the
   sources do not say; use exact figures from the sources.
 - inferences: your own reasoning or conclusions that go beyond the sources, one per item.
 - caveats: limits of the evidence (gaps, age of sources, what is missing).
