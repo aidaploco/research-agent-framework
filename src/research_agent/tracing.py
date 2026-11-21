@@ -20,7 +20,7 @@ import sys
 import time
 import uuid
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
@@ -40,6 +40,11 @@ class LLMAttempt(BaseModel):
     reply: str
     problem: str | None = None  # why this reply was rejected, if it was
     duration_ms: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    waited_ms: int = 0  # time spent waiting for the token allowance or a rate limit
+    retries: int = 0  # HTTP-level retries inside this call
+    retry_log: list[str] = []  # what each retry waited for
 
 
 class SourceRecord(BaseModel):
@@ -59,8 +64,11 @@ class PlanStep(BaseModel):
     index: int = 0
     duration_ms: int = 0
     tools_offered: str  # the tool descriptions the model chose between
+    action: Literal["search", "finish", "refuse"] = "search"
+    steps_left: int = 1  # how many searches the loop could still make, counting this one
+    log_shown: str = ""  # the compact log of earlier steps the planner was shown
     reasoning: str
-    tool: str  # a tool name, or "none"
+    tool: str  # a tool name; empty for finish and refuse
     query: str = ""
     options: dict = {}
     fell_back_to_default: bool = False  # the model's output never validated
@@ -75,9 +83,14 @@ class ToolStep(BaseModel):
     role: Literal["planned", "fallback"] = "planned"
     query: str
     options: dict = {}
-    status: Literal["ok", "error", "empty"]
-    error: str = ""
-    sources: list[SourceRecord] = []  # the raw output
+    # skipped: the loop refused to run it (a repeat, or a tool that already failed this run)
+    status: Literal["ok", "error", "empty", "skipped"]
+    error: str = ""  # the failure, or why it was skipped
+    sources: list[SourceRecord] = []  # the raw output, as stored (after the evidence budget)
+    new_sources: int = 0  # how many were not already in the evidence store
+    dropped_for_budget: int = 0  # returned but left out because the evidence budget was spent
+    trimmed_for_budget: int = 0  # kept, but cut short to fit
+    retries: list[str] = []  # each failed attempt inside the tool, and how long it waited
 
 
 class SynthesisStep(BaseModel):
@@ -102,6 +115,9 @@ class Trace(BaseModel):
     started_at: str
     question: str
     outcome: Literal["answered", "refused", "out_of_scope", "error"] = "answered"
+    mode: str = "multi-step"  # or "single-pass" (max_steps 1): the same loop, one search
+    max_steps: int = 1
+    stop_reason: str = ""  # why the loop stopped: finish, step_cap, duplicate, no_new_evidence, ...
     error: str = ""
     duration_ms: int = 0
     model: str = ""
@@ -127,6 +143,16 @@ class Run:
         )
         self._t0 = time.monotonic()
         self._attempts: list[LLMAttempt] = []
+        self._retries: list[tuple[str, str]] = []  # (label, note)
+
+    def note_retry(self, label: str, note: str) -> None:
+        self._retries.append((label, note))
+
+    def take_retries(self, label: str) -> list[str]:
+        """The retry notes recorded under `label` since they were last taken."""
+        mine = [n for lab, n in self._retries if lab == label]
+        self._retries = [(lab, n) for lab, n in self._retries if lab != label]
+        return mine
 
     def add(self, step: PlanStep | ToolStep | SynthesisStep) -> None:
         step.index = len(self.trace.steps) + 1
@@ -166,6 +192,17 @@ def record_attempt(attempt: LLMAttempt) -> None:
         run.record_attempt(attempt)
 
 
+def note_retry(label: str, note: str) -> None:
+    run = current()
+    if run:
+        run.note_retry(label, note)
+
+
+def take_retries(label: str) -> list[str]:
+    run = current()
+    return run.take_retries(label) if run else []
+
+
 def take_attempts() -> list[LLMAttempt]:
     run = current()
     return run.take_attempts() if run else []
@@ -173,18 +210,22 @@ def take_attempts() -> list[LLMAttempt]:
 
 # ---- storage -------------------------------------------------------------------------
 
+SCHEMA_VERSION = 2  # bump when SCHEMA changes: an older index is rebuilt from the JSON files
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
     run_id TEXT PRIMARY KEY, started_at TEXT, question TEXT, outcome TEXT, error TEXT,
-    duration_ms INTEGER, model TEXT, planned_tool TEXT, tools_used TEXT, fallback INTEGER,
-    n_steps INTEGER, n_sources INTEGER, n_sourced INTEGER, n_unverified INTEGER,
-    n_repairs INTEGER, path TEXT);
+    duration_ms INTEGER, model TEXT, mode TEXT, max_steps INTEGER, stop_reason TEXT,
+    tools_used TEXT, n_plan_steps INTEGER, n_tool_calls INTEGER, n_skipped INTEGER,
+    fallback INTEGER, n_sources INTEGER, n_sourced INTEGER, n_unverified INTEGER,
+    n_repairs INTEGER, prompt_tokens INTEGER, completion_tokens INTEGER, wait_ms INTEGER,
+    path TEXT);
 CREATE TABLE IF NOT EXISTS steps (
     run_id TEXT, idx INTEGER, type TEXT, tool TEXT, query TEXT, status TEXT,
     duration_ms INTEGER, n_sources INTEGER, detail TEXT, PRIMARY KEY (run_id, idx));
 CREATE TABLE IF NOT EXISTS llm_calls (
     run_id TEXT, step_idx INTEGER, purpose TEXT, attempt INTEGER, problem TEXT,
-    duration_ms INTEGER);
+    duration_ms INTEGER, prompt_tokens INTEGER, completion_tokens INTEGER,
+    waited_ms INTEGER, retries INTEGER);
 """
 
 
@@ -206,10 +247,14 @@ class TraceStore:
         return self.dir / f"{run_id}.json"
 
     def save(self, trace: Trace) -> Path:
+        """Write the JSON record, then update the index. The index failing never loses the record."""
         self.dir.mkdir(parents=True, exist_ok=True)
         path = self.path_for(trace.run_id)
         path.write_text(trace.model_dump_json(indent=2))
-        self.index(trace)
+        try:
+            self.index(trace)
+        except sqlite3.Error as e:
+            print(f"[trace] index not updated ({e}); run `trace_cli reindex`", file=sys.stderr)
         return path
 
     def load(self, run_id: str) -> Trace:
@@ -221,64 +266,104 @@ class TraceStore:
         return Trace.model_validate_json(self.path_for(run_id).read_text())
 
     def index(self, trace: Trace) -> None:
-        tool_steps = [s for s in trace.steps if isinstance(s, ToolStep)]
-        plan = next((s for s in trace.steps if isinstance(s, PlanStep)), None)
-        synth = next((s for s in trace.steps if isinstance(s, SynthesisStep)), None)
-        row = (
-            trace.run_id, trace.started_at, trace.question, trace.outcome, trace.error,
-            trace.duration_ms, trace.model, plan.tool if plan else None,
-            ",".join(dict.fromkeys(s.tool for s in tool_steps)),
-            int(any(s.role == "fallback" for s in tool_steps)),
-            len(trace.steps), sum(len(s.sources) for s in tool_steps),
-            len(synth.sourced) if synth else 0, len(synth.unverified) if synth else 0,
-            sum(max(0, len(s.llm_attempts) - 1) for s in trace.steps
-                if isinstance(s, (PlanStep, SynthesisStep))),
-            str(self.path_for(trace.run_id)),
-        )  # fmt: skip
         with self._connect() as db:
-            db.execute("DELETE FROM runs WHERE run_id=?", (trace.run_id,))
-            db.execute("DELETE FROM steps WHERE run_id=?", (trace.run_id,))
-            db.execute("DELETE FROM llm_calls WHERE run_id=?", (trace.run_id,))
-            db.execute("INSERT INTO runs VALUES (" + ",".join("?" * 16) + ")", row)
-            for s in trace.steps:
-                db.execute("INSERT INTO steps VALUES (?,?,?,?,?,?,?,?,?)", _step_row(trace, s))
-                for n, a in enumerate(getattr(s, "llm_attempts", []), 1):
-                    db.execute(
-                        "INSERT INTO llm_calls VALUES (?,?,?,?,?,?)",
-                        (trace.run_id, s.index, a.purpose, n, a.problem, a.duration_ms),
-                    )
+            self._insert(db, trace)
+            db.execute(
+                "UPDATE runs SET path=? WHERE run_id=?",
+                (str(self.path_for(trace.run_id)), trace.run_id),
+            )
 
     def reindex(self) -> int:
         """Rebuild the index from the JSON files (the JSON is the source of truth)."""
         if self.index_path.exists():
             self.index_path.unlink()
-        count = 0
-        for f in sorted(self.dir.glob("*.json")):
-            self.index(Trace.model_validate_json(f.read_text()))
-            count += 1
-        return count
+        with self._connect():  # recreates the schema and repopulates from the JSON files
+            pass
+        return len(list(self.dir.glob("*.json")))
+
+    def _version(self) -> int | None:
+        try:
+            with closing(sqlite3.connect(self.index_path)) as db:
+                return db.execute("PRAGMA user_version").fetchone()[0]
+        except sqlite3.DatabaseError:  # not a database at all
+            return None
 
     def _connect(self) -> sqlite3.Connection:
+        """Open the index, rebuilding it from the JSON files if it is missing or out of date."""
         self.dir.mkdir(parents=True, exist_ok=True)
+        rebuild = not self.index_path.exists() or self._version() != SCHEMA_VERSION
+        if rebuild:
+            self.index_path.unlink(missing_ok=True)
         db = sqlite3.connect(self.index_path)
-        db.executescript(SCHEMA)
+        if rebuild:
+            db.executescript(SCHEMA)
+            db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+            for f in sorted(self.dir.glob("*.json")):
+                try:
+                    self._insert(db, Trace.model_validate_json(f.read_text()))
+                except ValueError:  # a file that is not a trace of this version: skip it
+                    continue
+            db.commit()
         return db
+
+    @staticmethod
+    def _insert(db: sqlite3.Connection, trace: Trace) -> None:
+        plans = [s for s in trace.steps if isinstance(s, PlanStep)]
+        tools = [s for s in trace.steps if isinstance(s, ToolStep)]
+        calls = [s for s in trace.steps if isinstance(s, PlanStep | SynthesisStep)]
+        attempts = [a for s in calls for a in s.llm_attempts]
+        synth = next((s for s in trace.steps if isinstance(s, SynthesisStep)), None)
+        ran = [s for s in tools if s.status != "skipped"]
+        row = {
+            "run_id": trace.run_id, "started_at": trace.started_at, "question": trace.question,
+            "outcome": trace.outcome, "error": trace.error, "duration_ms": trace.duration_ms,
+            "model": trace.model, "mode": trace.mode, "max_steps": trace.max_steps,
+            "stop_reason": trace.stop_reason,
+            "tools_used": ",".join(dict.fromkeys(s.tool for s in ran)),
+            "n_plan_steps": len(plans), "n_tool_calls": len(ran),
+            "n_skipped": len(tools) - len(ran),
+            "fallback": int(any(s.role == "fallback" for s in tools)),
+            "n_sources": sum(s.new_sources for s in tools),
+            "n_sourced": len(synth.sourced) if synth else 0,
+            "n_unverified": len(synth.unverified) if synth else 0,
+            "n_repairs": sum(1 for a in attempts if a.problem),
+            "prompt_tokens": sum(a.prompt_tokens for a in attempts),
+            "completion_tokens": sum(a.completion_tokens for a in attempts),
+            "wait_ms": sum(a.waited_ms for a in attempts),
+            "path": "",
+        }  # fmt: skip
+        for table in ("runs", "steps", "llm_calls"):
+            db.execute(f"DELETE FROM {table} WHERE run_id=?", (trace.run_id,))
+        cols = ",".join(row)
+        db.execute(
+            f"INSERT INTO runs ({cols}) VALUES ({','.join('?' * len(row))})", tuple(row.values())
+        )  # noqa: S608
+        for s in trace.steps:
+            db.execute("INSERT INTO steps VALUES (?,?,?,?,?,?,?,?,?)", _step_row(trace, s))
+            for n, a in enumerate(getattr(s, "llm_attempts", []), 1):
+                db.execute(
+                    "INSERT INTO llm_calls VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (trace.run_id, s.index, a.purpose, n, a.problem, a.duration_ms,
+                     a.prompt_tokens, a.completion_tokens, a.waited_ms, a.retries),
+                )  # fmt: skip
 
     def query(self, sql: str) -> tuple[list[str], list[tuple]]:
         """Run one read-only SELECT against the index."""
         if not sql.lstrip().lower().startswith(("select", "with")):
             raise ValueError("only SELECT queries are allowed")
+        self._connect().close()  # make sure the index exists and is current
         uri = f"file:{self.index_path}?mode=ro"
-        with sqlite3.connect(uri, uri=True) as db:
+        with closing(sqlite3.connect(uri, uri=True)) as db:
             cur = db.execute(sql)
             return [d[0] for d in cur.description], cur.fetchall()
 
 
 def _step_row(trace: Trace, s: PlanStep | ToolStep | SynthesisStep) -> tuple:
     if isinstance(s, PlanStep):
-        return (trace.run_id, s.index, s.type, s.tool, s.query, "default" if s.fell_back_to_default else "ok", s.duration_ms, 0, s.reasoning)  # fmt: skip
+        status = "default" if s.fell_back_to_default else "ok"
+        return (trace.run_id, s.index, s.type, s.tool or None, s.query, f"{s.action}/{status}", s.duration_ms, 0, s.reasoning)  # fmt: skip
     if isinstance(s, ToolStep):
-        return (trace.run_id, s.index, s.type, s.tool, s.query, s.status, s.duration_ms, len(s.sources), s.error)  # fmt: skip
+        return (trace.run_id, s.index, s.type, s.tool, s.query, s.status, s.duration_ms, s.new_sources, s.error)  # fmt: skip
     return (trace.run_id, s.index, s.type, None, None, "repaired" if s.repaired else "ok", s.duration_ms, 0, s.refusal_reason)  # fmt: skip
 
 
@@ -301,5 +386,8 @@ def start_run(question: str, store: TraceStore | None = None, model: str = "") -
             try:
                 path = store.save(run.trace)
                 print(f"[trace] {path}", file=sys.stderr)
-            except OSError as e:  # a full disk must not lose the answer
+            except (
+                OSError,
+                sqlite3.Error,
+            ) as e:  # a full disk or a bad index must not lose the answer
                 print(f"[trace] could not save: {e}", file=sys.stderr)

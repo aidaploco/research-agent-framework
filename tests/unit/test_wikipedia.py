@@ -1,5 +1,6 @@
 import pytest
 
+from research_agent import retry
 from research_agent.tools import wikipedia
 from research_agent.tools.base import ToolError
 from research_agent.tools.wikipedia import WikipediaTool
@@ -14,7 +15,7 @@ FakeResponse = FakeHTTPResponse
 @pytest.fixture(autouse=True)
 def fast(monkeypatch):
     sleeps = []
-    monkeypatch.setattr(wikipedia.time, "sleep", sleeps.append)
+    monkeypatch.setattr(retry.time, "sleep", sleeps.append)
     return sleeps
 
 

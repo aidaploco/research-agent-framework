@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 import requests
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..retry import RetriesExhausted, Retry, with_retries
 from .base import Source, Tool, ToolError
 
 API = "https://export.arxiv.org/api/query"
@@ -105,20 +106,21 @@ class ArxivTool(Tool):
 
     def _get(self, params: dict) -> str:
         """Fetch with a short timeout and a short backoff. Worst case is about 40 seconds."""
-        reason = "no attempt made"
-        for attempt in range(self.attempts):
+
+        def attempt(n: int) -> str:
             _space_requests()
             try:
                 r = requests.get(API, headers=HEADERS, params=params, timeout=self.timeout)
             except requests.RequestException as e:
-                reason = type(e).__name__  # e.g. ReadTimeout
-            else:
-                if r.status_code == 200 and "<feed" in r.text:
-                    _mark_request()
-                    return r.text
-                limited = r.status_code == 429 or "Rate exceeded" in r.text
-                reason = "rate limited" if limited else f"HTTP {r.status_code}"
+                _mark_request()
+                raise Retry(type(e).__name__) from e  # e.g. ReadTimeout
             _mark_request()
-            if attempt < self.attempts - 1:
-                time.sleep(BACKOFF[min(attempt, len(BACKOFF) - 1)])
-        raise ToolError(f"arxiv unavailable after {self.attempts} attempts ({reason})")
+            if r.status_code == 200 and "<feed" in r.text:
+                return r.text
+            limited = r.status_code == 429 or "Rate exceeded" in r.text
+            raise Retry("rate limited" if limited else f"HTTP {r.status_code}")
+
+        try:
+            return with_retries("arxiv", attempt, attempts=self.attempts, backoff=BACKOFF)
+        except RetriesExhausted as e:
+            raise ToolError(f"arxiv unavailable after {e.attempts} attempts ({e.reason})") from e

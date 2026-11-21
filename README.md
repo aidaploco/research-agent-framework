@@ -4,8 +4,8 @@ A research agent for a banking team. It takes a natural-language question, plans
 tool to use, searches (Wikipedia, arXiv), and prints an answer in which every sourced
 claim carries a checked citation. It runs on free tiers only: no paid API keys.
 
-> **Status: work in progress.** Milestones M0 to M4 are merged (see [PLAN.md](PLAN.md));
-> the multi-step loop, FRED, the 8 reference runs and the evaluation harness are next.
+> **Status: work in progress.** Milestones M0 to M5 are implemented (see [PLAN.md](PLAN.md));
+> FRED, the 8 reference runs and the evaluation harness are next.
 > Sections marked *TBD* are filled in as those land. This README is updated with each milestone.
 
 ## Setup and run
@@ -23,8 +23,15 @@ Get a free Groq key at <https://console.groq.com>. No payment details are needed
 A FRED key (optional, for live economic data in a later milestone) is free at
 <https://fred.stlouisfed.org/docs/api/api_key.html>.
 
-The plan the agent chose is printed to stderr (`[plan] ...`) and so is the path of the run's
-trace (`[trace] ...`); add `2>/dev/null` to see only the answer.
+By default the agent may make up to 3 searches, one tool at a time, refining as it goes. For
+one search and then an answer, add `--single-pass` (or set the cap with `--max-steps N`):
+
+```sh
+uv run python main.py --single-pass "What is the Federal Reserve's discount window?"
+```
+
+Each step the agent takes is printed to stderr (`[plan 1] ...`, `[plan 2] ...`) and so is the
+path of the run's trace (`[trace] ...`); add `2>/dev/null` to see only the answer.
 
 Every run writes a trace. To read the last one:
 
@@ -61,10 +68,11 @@ Put the question in quotes. The agent works out which source suits it:
 | Research literature, "recent papers" | arXiv | *What recent academic research exists on using machine learning for credit risk assessment?* |
 | Nothing it can help with | refused, with no search and no model call | *What is the best restaurant in New York City?* |
 
-Today a question gets **one** tool call. A question that needs two sources (for example *"explain
-yield curve inversions and find recent papers"*) is answered from whichever tool the planner
-picks; the multi-step loop that fixes this is the next milestone. There is no FRED tool yet, so
-questions about current economic data cannot be answered from live data.
+A question that needs two sources (for example *"explain yield curve inversions and find recent
+papers"*) is answered in steps: the agent searches one tool, looks at what came back, and
+searches the next, up to 3 searches. If a search finds nothing or the wrong thing it changes the
+query instead of giving up. Add `--single-pass` for one search only. There is no FRED tool yet,
+so questions about current economic data cannot be answered from live data.
 
 ### Read the answer
 
@@ -94,6 +102,7 @@ The answer goes to stdout; the plan and the trace path go to stderr. An abridged
   visible and labelled with the reason, never silently dropped. Do not rely on them.
 - **Notices** (only when present): written by code, for example that a tool was unavailable
   and another one answered in its place.
+- **Gaps:** the sources answered part of the question, and this says what is missing.
 - **Cannot answer from sources:** the sources did not answer the question, or it was out of
   scope. The agent says so instead of guessing.
 
@@ -125,8 +134,11 @@ Set these in `.env` (copy `.env.example`) or in the environment.
 - **"Cannot answer from sources":** the retrieved articles did not contain the answer. Try
   rewording with the topic's proper name (for example "Basel III", not "bank capital rules").
   `trace_cli show latest` shows what was searched and retrieved.
-- **A slow run:** most of the time is the model and the network. arXiv adds up to about 40
-  seconds when it is rate-limiting.
+- **`[pacing] waiting 24.4s for the token allowance`:** normal on the free tier. A multi-step run
+  sends more text to the model than the 8,000 tokens per minute allow, so the client waits for
+  the allowance to refill instead of failing. `--single-pass` avoids most of it.
+- **A slow run:** most of the time is the model, the network and pacing. A multi-step run can
+  take a minute; arXiv adds up to about 40 seconds when it is rate-limiting.
 
 ### Add a tool
 
@@ -146,12 +158,12 @@ path. (IDs stay unique even if two tools share a prefix; distinct letters just r
 ```
 main.py                      CLI entry point (clean error messages, exit code 1 on failure)
 src/research_agent/
-  agent.py                   plan -> run one tool -> synthesize -> render
-  planner.py                 LLM picks a tool + query (Pydantic Plan)
+  agent.py                   the research loop: plan a step, run it, repeat, then synthesize
+  planner.py                 LLM picks the next action: search, finish or refuse (Pydantic Plan)
   synthesis.py               structured claims, validation, demotion, rendering
   grounding.py               checks that figures in a claim are in the cited sources
-  evidence.py                evidence IDs (W1, A2, ...) for every retrieved source
-  llm.py                     Groq client + structured() for schema-validated output
+  evidence.py                evidence IDs (W1, A2, ...) and the per-run evidence size budget
+  llm.py                     Groq client (token pacing, Retry-After cap) + structured() output
   tracing.py                 trace models, the run recorder, JSON + SQLite storage
   trace_cli.py               list / show / sql / reindex for traces
   tools/
@@ -167,13 +179,16 @@ Pydantic model with the tool, title, URL, text, the source's own ID where one ex
 arXiv ID) and metadata (authors, date). Adding a tool means writing one class and
 registering it in `registry.py`; the planner prompt is generated from the registry.
 
-**Planning.** The LLM receives the registered tools and returns a `Plan`
-(`reasoning`, `tool`, `query`, `options`). The reply is parsed and validated with
-Pydantic, then checked against the registry (known tool, non-empty query, options valid
-for that tool, with types coerced: the model sometimes writes `"true"` for a boolean).
-An invalid reply is sent back to the model with the error for one retry, then falls back
-to a default tool rather than failing the run. The tool `none` declines a question that
-no tool can help with; the agent then refuses without spending an LLM call.
+**Planning.** Each step the LLM receives the question, the tools it may use, how many searches
+are left, and a compact log of what the loop already did (tool, query, outcome, and the titles
+found, never source text). It returns a `Plan`: an `action` (`search`, `finish` or `refuse`),
+`reasoning`, and for a search the `tool`, `query` and `options`. The reply is parsed and
+validated with Pydantic, then checked by code against rules the model cannot be trusted with:
+it may **refuse only before any evidence exists** and **finish only after some does**, it may
+not pick a tool that already failed this run, and a search's options must be valid for that
+tool (types are coerced: the model sometimes writes `"true"` for a boolean). A reply that breaks
+a rule is sent back with the reason for one retry, then a safe default is used rather than
+failing the run. A refusal ends the run without searching or calling the model again.
 
 **Evidence IDs.** Every retrieved source gets an ID from its tool's prefix and a counter:
 `W1`, `W2` for Wikipedia, `A1`, `A2` for arXiv. IDs are stable for the whole run, and a
@@ -198,9 +213,32 @@ substitutions), *From sources* (validated claims with citations),
 *Unverified* (only if something was demoted), *Model inference / caveats*, and *Sources*
 (title, ID, URL, built from the tool results, never written by the model).
 
-**Orchestration pattern.** *TBD (M5).* The intended pattern is a ReAct-style loop with
-state, so the agent can refine searches and avoid repeating calls. Today it is a single
-plan-then-synthesize pass.
+**Orchestration pattern: a ReAct-style loop with state kept in code.** The agent alternates
+*reason* (the planner picks an action after seeing what has happened) and *act* (run one tool),
+then observes the result, until it decides it has enough. The state lives in ordinary code, not
+in the model:
+
+- a **step cap** (`--max-steps`, default 3), so the loop always ends; `--single-pass` is the same
+  loop with the cap at 1, which makes the single-pass vs multi-step comparison fair;
+- a **seen-set**: a repeated search (same tool, query and options) is never executed; it is
+  recorded as a skipped step and ends the loop;
+- a per-run **failed-tool set**: a tool that failed is not offered or retried on later steps, so a
+  dead arXiv costs one failure, not one per step;
+- one **evidence budget** for the whole run (see below), so the prompt always fits the free tier;
+- a **fallback** to another tool only on the last allowed step: before that, a failure is left
+  to the planner, which can see it and choose differently.
+
+The loop stops on: the planner choosing *finish*, the step cap, a repeated search, two steps in a
+row that found nothing new, or a spent evidence budget. The reason is recorded in the trace.
+
+*Why this pattern.* The questions that need more than one search are exactly the ones where the
+second search depends on the first result (a definition, then papers on it; a query that came
+back empty, then a better one). Plan-and-execute would fix the searches before seeing any result,
+so it cannot refine. A fixed state machine would need a state for every shape of question. A
+ReAct loop handles both with one prompt, and keeping its bookkeeping in code means the model's
+mistakes (repeating a query, refusing after it has evidence, calling a dead tool) are caught by
+rules instead of by hope. The costs are more model calls per question, and a planner that
+sometimes stops too early or too late; both are measured below.
 
 ## Observability: traces
 
@@ -211,12 +249,14 @@ order:
 
 | Step | What it holds |
 |---|---|
-| **plan** | the tools offered, the model's stated reasoning, the tool, query and options chosen, whether the model's output never validated and a default tool was used, and every model call exactly as sent and received (including replies that were rejected) |
-| **tool** | the tool called, whether it was the planned tool or a fallback, its input, status (`ok`, `empty`, `error`), the error text, and the raw sources it returned with the evidence IDs they were given |
+| **plan** (one per step) | the tools offered, the compact log of earlier steps the model was shown, how many searches were left, the model's stated reasoning, the action (`search`, `finish`, `refuse`) with its tool, query and options, whether the model's output never validated and a default was used, and every model call exactly as sent and received (including replies that were rejected), with its token counts, any wait, and HTTP retries |
+| **tool** | the tool called, whether it was the planned tool or a fallback, its input, status (`ok`, `empty`, `error`, or `skipped` for a repeat or an already-failed tool that the loop refused to run), the error or reason, the sources it returned with the evidence IDs they were given, how many were new, how many were trimmed or dropped for the evidence budget, and each retry the tool made inside the call |
 | **synthesis** | which evidence IDs the model could cite, every model call and the validation problem that caused a retry, and the result: each claim as sourced or unverified (with the reason), inferences, caveats and any refusal |
 
-The trace also holds the question, the model name, timing per step, the outcome (`answered`,
-`refused`, `out_of_scope` or `error`), the notices, and the final answer text. A reviewer can
+The trace also holds the question, the model name, the mode (`single-pass` or `multi-step`) and
+step cap, **why the loop stopped** (`finish`, `step_cap`, `duplicate`, `no_new_evidence`,
+`budget`, `tool_unavailable` or `refuse`), timing per step, the outcome (`answered`, `refused`,
+`out_of_scope` or `error`), the notices, and the final answer text. A reviewer can
 follow a decision from the offered tools, to the reasoning, to the retrieved evidence, to the
 claims that survived validation. `trace_cli show` prints exactly that as a narrative:
 
@@ -235,8 +275,8 @@ Step 3  SYNTHESIS (2221 ms)  may cite: W1, W2
 ```
 
 The SQLite index has three tables (`runs`, `steps`, `llm_calls`), so questions like "how often
-did the planner's output need a repair?" or "which runs fell back to another tool?" are one
-`SELECT` away (`trace_cli sql` accepts read-only queries only). The index can always be rebuilt
+did the planner's output need a repair?", "which runs fell back to another tool?" or "how many
+tokens did multi-step runs use compared with single-pass?" are one `SELECT` away (`trace_cli sql` accepts read-only queries only). The index can always be rebuilt
 from the JSON files with `trace_cli reindex`.
 
 Notes on what a trace is and is not:
@@ -249,7 +289,8 @@ Notes on what a trace is and is not:
   response.
 - Traces include full prompts and retrieved text, so they can be large. They stay local
   (`.traces/` is gitignored); sample traces for the reference questions are committed with
-  their outputs in a later milestone. Token usage is not recorded yet.
+  their outputs in a later milestone. An index from an older version of the schema is rebuilt
+  from the JSON files automatically.
 
 ## Key design decisions and tradeoffs
 
@@ -298,11 +339,11 @@ tier** with `openai/gpt-oss-120b`.
 I chose cloud because the planner and the synthesis depend on reliable structured
 output and reasoning, and because a reviewer can run a question in seconds. The cost is
 the signup and the rate limits. The limits I observed in Groq's response headers for
-this model on a free key were **8,000 tokens per minute** and a **1,000 request** limit
-(the window for the request limit is not verified; limits change, so check the Groq
-console). The token limit is the one that matters: it caps how much tool output can be
-sent to the model, which is why Wikipedia extracts are truncated (8,000 characters for the
-top article, 3,000 for others) and arXiv abstracts to 1,200.
+this model on a free key were **8,000 tokens per minute** and **1,000 requests** (the headers
+show it resetting about a day later; limits change, so check the Groq console). The token limit is the one that matters: it caps how much tool output can be
+sent to the model, which is why there is an evidence budget (see *Token budget and pacing*),
+and why Wikipedia extracts are truncated (8,000 characters for the top article, 3,000 for
+others) and arXiv abstracts to 1,200.
 
 All LLM calls go through `llm.py`, which is the swap point for another provider. Local
 servers such as Ollama expose an OpenAI-compatible endpoint, so a local backend should be
@@ -320,18 +361,40 @@ check, and retries once with the problem described. The `Answer` schema uses Gro
 plan's `options` differ per tool, so options are validated afterwards against the chosen
 tool's options model instead.
 
-### One tool call per planning step
+### One tool call per step, several steps per question
 
-The planner picks a single tool per step; it does not call several tools in parallel.
+The planner picks a single tool per step; it does not call several tools in parallel. A question
+that needs two tools takes two steps.
 
-- **Why:** the 8,000 tokens/minute limit makes parallel retrieval risky (several tools'
-  output in one prompt can exceed it), and one call per step keeps each step's reasoning
-  and trace easy to read.
-- **Cost:** a question that needs two tools (for example *"explain yield curve inversions
-  and find recent papers"*) takes two steps instead of one. Until the multi-step loop
-  lands (M5), the agent makes only one call per question, so cross-tool questions are
-  answered from one tool. This is a known limitation, not a bug.
-- **Later:** parallel calls can be added if the rate limit allows.
+- **Why:** the free tier's 8,000 tokens per minute makes parallel retrieval risky (several tools'
+  output in one prompt can exceed it), and one call per step keeps each step's reasoning and the
+  trace easy to read. It is also what makes refinement possible: each search is chosen after the
+  previous result is known.
+- **Cost:** more model calls per question, and, because every call counts against the token
+  allowance, more waiting (measured below: about 4x the time on a cross-tool question).
+- **Later:** parallel calls could be added if a higher rate limit allowed.
+
+### Token budget and pacing
+
+The free tier limits *tokens per minute*, and this was measured, not assumed: sending a
+deliberately oversized request returned HTTP 413 reporting the **prompt tokens plus
+`max_completion_tokens`** as the request size (9,698 against the limit of 8,000, for a prompt of
+about 9,600 tokens and an output allowance of 100). So the output allowance counts. Groq's
+response headers show the bucket refilling continuously at limit/60 tokens a second, and the
+1,000-request limit resets on roughly a daily window.
+
+Three things follow in the code:
+
+- **One evidence budget per run** (16,000 characters, about 4,000 to 5,000 tokens), enforced as
+  sources enter the evidence store: a source that crosses the budget is trimmed, later ones are
+  dropped, and the loop stops when it is spent. The prompt, the grounding check and the trace
+  therefore all see exactly the same text. The planner is only shown titles, never bodies.
+- **Pacing:** before each call the client computes the tokens available now from the last
+  response's headers and the refill rate, and waits if the request would not fit, instead of
+  failing. A request that could never fit (over 8,000 tokens by itself) is refused before it is
+  sent. Waits are printed (`[pacing] ...`) and recorded in the trace.
+- **`Retry-After` is capped at 30 seconds.** If the API asks for longer (a daily quota, not a
+  per-minute limit) the client stops with a clear error instead of sleeping for hours.
 
 ### Wikipedia: exact title first
 
@@ -348,25 +411,58 @@ body, not a 429, and it occasionally times out; Wikipedia returns 429 under burs
 
 - **Retry:** each tool makes up to **3 attempts**, with a **10-second timeout** per request
   and a **short backoff** (arXiv 2s then 4s, Wikipedia 1s then 2s). arXiv also spaces
-  requests at least 3 seconds apart. The worst case for arXiv is about 40 seconds.
+  requests at least 3 seconds apart. The worst case for arXiv is about 40 seconds. One helper
+  (`retry.py`) runs the loop for arXiv, Wikipedia and the model client, and notes every failed
+  attempt, with its reason and wait, in the trace (under the tool step or the model call).
 - **Tradeoff:** during development a single arXiv query once needed about 25 seconds of
   retries to clear a rate limit. Short backoff means more runs give up on arXiv and fall back,
   in exchange for never hanging for minutes.
-- **Fallback:** if the planned tool is still unavailable, the agent tries the other
-  registered tools with the same query (without the planned tool's options). Anything they
-  return is used as evidence.
+- **A failure is shown to the planner:** in a multi-step run the failed tool is marked as failed
+  in the log and not offered again, so the planner can choose another tool or query itself.
+- **Fallback:** only on the *last* allowed step (always, in single-pass mode), when no later step
+  could react, the agent tries the other registered tools with the same query (without the
+  planned tool's options). Anything they return is used as evidence.
 - **Disclosure:** the code, not the model, prints a **Notices** section saying which tool
   was unavailable and why, and, if another tool answered instead, that the sources come from
   that tool and may not cover what the planned one would have. The model is told as well, so
   it can caveat. A substitute that returns nothing is not presented as an answer.
 - **Not done:** circuit breakers, and measuring answer quality under partial failure
   (that is the Tier 3 reliability item; the Tier 3 choice here is the evaluation harness).
-  A tool that works but returns nothing does not trigger a fallback; refining the search is
-  the job of the multi-step loop (M5).
+  A tool that works but returns nothing does not trigger a fallback; in a multi-step run the
+  planner sees "no results" in its log and refines the query.
 
 ## Agent performance summary
 
 *TBD (M7 runs the 8 reference questions; M8 adds the evaluation harness).*
+
+### Single-pass vs multi-step (M5, live, one run each: not a benchmark)
+
+The same loop with one search (`--single-pass`) against the default of up to three. Numbers come
+from the runs' traces (`trace_cli sql`); the final side-by-side outputs for the README come with
+the reference runs (M7).
+
+| Question | Mode | Searches | Sourced claims | Prompt + output tokens | Time |
+|---|---|---|---|---|---|
+| Yield curve inversions and recessions, and recent papers (cross-tool) | single-pass | arXiv | 4 | 1,532 + 566 | 15 s |
+| | multi-step | Wikipedia, then arXiv | 7 | 7,818 + 2,049 | 60 s (52 s waiting for the token allowance) |
+| Fed response to 2008 vs COVID-19 (comparison) | single-pass | arXiv (no results) | 0: refused | 1,084 + 202 | 29 s (arXiv retries) |
+| | multi-step (after prompt tuning) | Wikipedia twice, then finish | 4 sourced, 1 unverified, and a stated gap | 5,988 + 1,260 | 13 s |
+
+What this shows:
+
+- **Cross-tool questions are where multi-step wins.** On the yield-curve question single-pass could
+  only reach arXiv and answered from two papers; multi-step added Wikipedia's definition of an
+  inverted yield curve first, giving a fuller answer. It cost about five times the tokens and four
+  times the time, almost all of it waiting for the free tier's token allowance.
+- **Multi-step recovers from a bad first search.** In the comparison question single-pass chose
+  arXiv with a five-word query that matched nothing and had to refuse; multi-step started from
+  Wikipedia and found the 2008 article.
+- **It is not a complete answer.** The Wikipedia search for the COVID-19 response returned an
+  article about COVID-19 policy in April 2020 rather than the Federal Reserve's actions, and the
+  planner called the evidence "sufficient" and finished. The answer covers 2008, says plainly that
+  the COVID-19 side is missing, and does not invent it. Two earlier problems in the same run were
+  fixed by prompt changes: the planner repeated a failed query (the loop's repeat guard caught
+  it), and the synthesis prompt made the model discard the half of the answer it could support.
 
 Early observations (M3, single runs, not a benchmark):
 
@@ -393,7 +489,15 @@ Early observations (M3, single runs, not a benchmark):
 
 Known at this milestone:
 
-- One tool call per question (see above); cross-tool questions are answered from one tool.
+- **The planner's judgement is the weak point of multi-step.** It sometimes calls evidence
+  sufficient when it is not (the 2008 vs COVID-19 question), and a model that is told not to
+  repeat a search sometimes does (the loop skips the repeat and stops). The step cap, repeat
+  guard and no-progress rule bound the damage; they do not make the planner right.
+- **Multi-step is slow on the free tier**: more model calls against 8,000 tokens a minute means
+  waiting (about 50 seconds of pacing on the cross-tool question above). `--single-pass` trades
+  completeness for speed.
+- The evidence budget (16,000 characters) means a run that gathers a lot trims or drops later
+  sources, and the model never sees what was cut; the trace records it.
 - **The grounding check is keyword proximity, not understanding.** It confirms a number is
   in a cited source near words from the claim; it cannot tell that a claim reverses the
   passage's meaning. Two figures in one unpunctuated clause share context, so swapped figures
@@ -407,8 +511,7 @@ Known at this milestone:
 - arXiv is slow and sometimes unavailable. The fallback tool may not be a good substitute
   (Wikipedia is not a substitute for papers); the notice says so, but the answer is weaker.
 - No FRED tool yet, so current economic data can't be retrieved.
-- Traces do not record token usage yet, and the retries inside the tools (arXiv and Wikipedia
-  backoff) are not separate trace steps: only the final outcome of each tool call is.
+- Results above are single live runs on one day; the planner and the sources vary from run to run.
 - No evaluation harness yet.
 
 ## What I would do differently with more time

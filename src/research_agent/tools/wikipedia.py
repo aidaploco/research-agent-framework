@@ -1,9 +1,8 @@
 """Wikipedia tool: search the Action API, fetch plain-text article extracts."""
 
-import time
-
 import requests
 
+from ..retry import RetriesExhausted, Retry, with_retries
 from .base import Source, Tool, ToolError
 
 API = "https://en.wikipedia.org/w/api.php"
@@ -36,22 +35,25 @@ class WikipediaTool(Tool):
 
     def _get(self, params: dict, attempts: int = 3) -> dict:
         """One API call. Rate limits (429), timeouts and connection errors are retried."""
-        reason = "no attempt made"
-        for attempt in range(attempts):
+
+        def attempt(n: int) -> dict:
             try:
                 r = requests.get(
                     API, headers=HEADERS, timeout=TIMEOUT, params={**params, "format": "json"}
                 )
             except (requests.Timeout, requests.ConnectionError) as e:
-                reason = type(e).__name__
-            else:
-                if r.status_code != 429:
-                    r.raise_for_status()
-                    return r.json()
-                reason = "rate limited"
-            if attempt < attempts - 1:
-                time.sleep(BACKOFF[min(attempt, len(BACKOFF) - 1)])
-        raise ToolError(f"wikipedia unavailable after {attempts} attempts ({reason})")
+                raise Retry(type(e).__name__) from e
+            if r.status_code == 429:
+                raise Retry("rate limited")
+            r.raise_for_status()
+            return r.json()
+
+        try:
+            return with_retries("wikipedia", attempt, attempts=attempts, backoff=BACKOFF)
+        except RetriesExhausted as e:
+            raise ToolError(
+                f"wikipedia unavailable after {e.attempts} attempts ({e.reason})"
+            ) from e
 
     def _source(self, title: str, text: str, limit: int) -> Source:
         return Source(

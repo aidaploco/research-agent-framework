@@ -158,7 +158,7 @@ Each milestone ends runnable and committed. Closed checklist IDs are listed.
   - Structured trace per run: step, tool, input, raw output, reasoning and final synthesis. Stored as JSON, with a SQLite index.
   - A small script to query or pretty-print a trace.
   - Closes: O1–O4.
-- **M5 — Multi-step loop with state.**
+- **M5 — Multi-step loop with state.** *(Implemented on branch `m5-multistep-loop`: planner actions, step cap, seen-set, failed-tool set, evidence budget, token pacing, `--single-pass`; the shared retry helper is a separate commit.)*
   - A ReAct-style loop with a step cap, a retrieved-items memory, and dedupe of repeated calls.
   - A single-pass flag for comparison.
   - Closes: M1–M3, A6 (design decision).

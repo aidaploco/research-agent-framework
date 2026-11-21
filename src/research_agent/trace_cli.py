@@ -19,7 +19,13 @@ def _attempts(step: PlanStep | SynthesisStep) -> list[str]:
     lines = []
     for n, a in enumerate(step.llm_attempts, 1):
         status = f"REJECTED: {a.problem}" if a.problem else "accepted"
-        lines.append(f"    model call {n} ({a.model}, {a.duration_ms} ms): {status}")
+        cost = f", {a.prompt_tokens}+{a.completion_tokens} tokens" if a.prompt_tokens else ""
+        wait = f", waited {a.waited_ms} ms" if a.waited_ms else ""
+        retry = f", {a.retries} retries" if a.retries else ""
+        lines.append(
+            f"    model call {n} ({a.model}, {a.duration_ms} ms{cost}{wait}{retry}): {status}"
+        )
+        lines += [_wrap(f"retry: {note}", "      ") for note in a.retry_log]
         if a.problem:
             lines.append(_wrap(f"reply was: {a.reply[:300]}", "      "))
     return lines
@@ -31,31 +37,43 @@ def render_trace(t: Trace) -> str:
         f"Run {t.run_id}   {t.started_at}   {t.duration_ms} ms   model {t.model}",
         f"Question: {t.question}",
         f"Outcome:  {t.outcome}" + (f"  ({t.error})" if t.error else ""),
+        f"Mode:     {t.mode} (up to {t.max_steps} search{'es' if t.max_steps != 1 else ''}); "
+        f"stopped because: {t.stop_reason or 'n/a'}",
         "",
     ]
     for s in t.steps:
         if isinstance(s, PlanStep):
             default = (
-                "  [model output never validated: default tool used]"
+                "  [model output never validated: a default was used]"
                 if s.fell_back_to_default
                 else ""
             )
+            chose = s.action + (f" {s.tool}  query={s.query!r}" if s.action == "search" else "")
+            if s.options:
+                chose += f"  options={s.options}"
             out += [
-                f"Step {s.index}  PLAN ({s.duration_ms} ms){default}",
-                f"  chose: {s.tool}" + (f"  query={s.query!r}" if s.query else "") + (f"  options={s.options}" if s.options else ""),
+                f"Step {s.index}  PLAN ({s.duration_ms} ms, {s.steps_left} search(es) left){default}",
+                "  saw (earlier steps):",
+                *[_wrap(line, "    ") for line in s.log_shown.splitlines()],
+                f"  chose: {chose}",
                 _wrap(f"why: {s.reasoning}", "  "),
                 *_attempts(s),
             ]  # fmt: skip
         elif isinstance(s, ToolStep):
             what = {
-                "ok": f"{len(s.sources)} sources",
+                "ok": f"{len(s.sources)} sources ({s.new_sources} new)",
                 "empty": "no results",
                 "error": f"ERROR: {s.error}",
+                "skipped": f"SKIPPED, not run: {s.error}",
             }[s.status]
+            budget = ""
+            if s.dropped_for_budget or s.trimmed_for_budget:
+                budget = f"  [evidence budget: {s.trimmed_for_budget} trimmed, {s.dropped_for_budget} dropped]"
             out += [
                 f"Step {s.index}  TOOL {s.tool} [{s.role}] ({s.duration_ms} ms)  query={s.query!r}"
                 + (f" options={s.options}" if s.options else ""),
-                f"  result: {what}",
+                f"  result: {what}{budget}",
+                *[_wrap(f"retry: {note}", "    ") for note in s.retries],
             ]  # fmt: skip
             for src in s.sources:
                 ident = f" {src.native_id}" if src.native_id else ""
