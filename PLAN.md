@@ -123,6 +123,8 @@ Pick one. Details are in the Ambiguities section.
 - **Tier 3:** the evaluation harness (D-EVAL).
 - **FRED without a key:** do not retrieve or guess. Say live unemployment data cannot be retrieved without the FRED key. Background from Wikipedia on how the rate is measured is allowed, labelled as general context that may be out of date. Never state a current rate from model memory.
 - **Planner:** one tool call per step for now. Documented as a tradeoff in the README.
+- **Unverified claims (M3):** a claim whose evidence ID is unknown gets one repair retry; if still unknown it is moved out of the sourced section and labelled unverified, never dropped. Rationale (also in the README): dropping silently hides information, and demoting keeps retrieved information separate from the model's own inference.
+- **Structured claims (M3):** the model returns `{text, evidence_ids}` claims (IDs like W1, A2, assigned per tool prefix); code writes the citation markers and validates the IDs. Pydantic is used for structured outputs where applicable.
 - **README:** kept up to date with every milestone.
 - **Layout:** uv, `src/` layout, CI with ruff, tests, gitleaks and a `ci-success` gate (done). Other items from the agent-chassis comparison (offline vs live evals, deterministic graders) are adopted as the milestones reach them.
 
@@ -146,7 +148,7 @@ Each milestone ends runnable and committed. Closed checklist IDs are listed.
   - Add arXiv behind a common `Tool` interface and a small registry.
   - Add the LLM planner that picks tools.
   - Closes: T1, T3, A3, S3.
-- **M3 — Cited, split synthesis.**
+- **M3 — Cited, split synthesis.** *(Implemented on branch `m3-structured-synthesis`: structured claims, evidence IDs, demotion, number grounding, out-of-scope refusal.)*
   - Source list with titles, IDs and URLs.
   - "From sources" and "Model inference" sections.
   - Scope check for Q7.
