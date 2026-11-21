@@ -359,3 +359,77 @@ I'm waiting for your go-ahead to push and open a PR, or to start M2.
 ## [2026-11-20 18:55:41] Prompt
 
 why is there an agent.py file inside src and outside src? it's confusing. rename the outside one to main.py if its only function is to provide entry to the system
+
+## [2026-11-20 18:56:10] Response
+
+I renamed the root `agent.py` to `main.py`, so only `src/research_agent/agent.py` is left (the orchestration code). The root file only parsed arguments, loaded `.env`, and called `answer()`.
+
+- **Run command:** it's now `uv run python main.py "your question"`. The spec's `python agent.py` was given as an example ("e.g."), so this should satisfy it. The README will use the new name.
+- **Text updates:** I updated main.py's usage message. I also updated the M1 line in `PLAN.md` and added a note on the spec's wording. The two spec quotes (A10, R3) still say `agent.py` on purpose, since they quote the spec.
+- **Checks:** ruff format and lint pass. `main.py` prints the right usage text with no arguments, and an end-to-end run still answers correctly.
+- **Commit:** the rename is `86fcf5c`, on top of the M1 commit on `m1-thin-slice`. The first attempt at the commit left main.py's usage text and the `PLAN.md` note unchanged, because `sed -i` failed on macOS. I amended the commit before anything was pushed, so there's only one rename commit.
+- **Prompt log:** the commit also includes the latest `prompt-log.md` entries, since the hooks keep appending to it.
+
+Nothing is pushed. I'm waiting for your go-ahead to push and open a PR, or to start M2.
+
+---
+
+## [2026-11-20 18:56:43] Prompt
+
+push the branch and open a PR
+
+## [2026-11-20 18:57:38] Response
+
+The branch is pushed and PR #1 is open: https://github.com/aidaploco/research-agent-framework/pull/1
+
+CI ran on GitHub and everything passed: lint, tests on Python 3.11 and 3.12, the gitleaks scan, and `ci-success`.
+
+- **PR description:** it covers what M1 adds, the known limitations (brittle query rewrite, the model's own citation markers, no scope check before retrieval), and how it was tested.
+- **No Claude line on the PR:** the session reminder asks for a "Generated with Claude Code" line on PR descriptions. I left it off. Your CLAUDE.md rule is about commits, but PR text can become a squash-merge commit message, and I didn't want to risk that.
+- **Merge:** I haven't merged it. `main` still needs a PR with no direct pushes.
+- **Next step for you:** `ci-success` now exists as a check, so I can make it a required check on `main` if you want. Say so and I'll do it.
+- **Uncommitted file:** `prompt-log.md` is modified locally again because the hooks keep appending to it. It isn't in the PR. I'll include it in the next commit.
+
+---
+
+## [2026-11-20 18:59:00] Prompt
+
+make it a required check on main and merge the PR. tell me what's next.
+
+## [2026-11-20 18:59:53] Response
+
+`ci-success` is now a required check on `main`, and PR #1 is merged. Local `main` matches the remote.
+
+**Branch protection on `main`**
+- The required check is `ci-success`.
+- A PR is still required, with 0 approvals.
+- Admins are included, and force pushes and deletion are blocked.
+- My first attempt failed. GitHub's status-check endpoint only edits checks that already exist, so I re-sent the full protection with the check added. The other settings are unchanged.
+
+**Merge**
+- I used a merge commit, `384e698`, not a squash. That keeps the individual commits in history, and history is graded.
+- The merge commit's author shows as "Aida", not "Aida Ploco". That comes from the GitHub web merge, not your git config.
+
+**Not done**
+- **Branches:** I didn't delete `m1-thin-slice`, local or remote. The delete was blocked, and you hadn't asked for it. Say so and I'll clean it up.
+- **Prompt log:** `prompt-log.md` is still modified locally. It'll go into the next branch's first commit.
+
+## What's next: M2, a second tool and a tool interface
+
+Closes T1, T3, A3 and S3.
+
+1. **Tool interface:** a `Tool` base class and a registry. Each tool declares a name, a description for the planner, and an input schema. It returns results as `Source` objects with a title, URL or ID, and text.
+2. **Wikipedia tool:** moved onto that interface.
+3. **arXiv tool:** a new tool on the same interface. Its results carry paper IDs, authors and dates, sorted by date so "recent" means something.
+4. **Planner:** an LLM step that picks which tool or tools to call and with what query. It replaces the brittle query rewrite, which is why the discount-window run was unreliable. Output is validated JSON, with a retry if parsing fails.
+5. **Tests:** mocked tests for both tools, the registry and the planner's JSON handling.
+
+Later milestones, in order: M3 cited and split synthesis with a scope check for Q7, M4 tracing, M5 the multi-step loop, M6 FRED, M7 the 8 reference runs, M8 the eval harness, M9 README, M10 publish.
+
+**One call for you:** should the planner pick a single tool per step, or several in parallel? Parallel is faster, but Groq's 8,000 tokens/min limit makes that risky. I'd start with one tool call per step and add parallel calls only if the limit allows. If you agree, I'll start M2 on a new branch.
+
+---
+
+## [2026-11-20 19:03:02] Prompt
+
+you can clean up the branch. yes start with a single tool per step for now, make sure to mention it as a trade off in the readme (you also still need to add the part about cloud model vs local model btw, make sure to keep the readme updated). start m2 on a new branch

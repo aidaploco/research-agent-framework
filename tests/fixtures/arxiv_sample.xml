@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>http://arxiv.org/abs/2501.01234v2</id>
+    <title>Deep Learning for
+      Credit Risk Assessment</title>
+    <published>2025-01-05T10:00:00Z</published>
+    <summary>We study neural networks
+      for default prediction.</summary>
+    <author><name>Ada Example</name></author>
+    <author><name>Bo Sample</name></author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2410.99999v1</id>
+    <title>Gradient Boosting Scorecards</title>
+    <published>2024-10-02T08:30:00Z</published>
+    <summary>Boosted trees beat logistic regression.</summary>
+    <author><name>Cy Test</name></author>
+  </entry>
+</feed>

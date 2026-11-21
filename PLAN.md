@@ -117,6 +117,17 @@ Pick one. Details are in the Ambiguities section.
 
 ---
 
+## Decisions made (by Aida)
+
+- **LLM backend:** Groq free tier, `openai/gpt-oss-120b`. Google AI Studio signup did not work. Tradeoff vs a local model is documented in the README.
+- **Tier 3:** the evaluation harness (D-EVAL).
+- **FRED without a key:** do not retrieve or guess. Say live unemployment data cannot be retrieved without the FRED key. Background from Wikipedia on how the rate is measured is allowed, labelled as general context that may be out of date. Never state a current rate from model memory.
+- **Planner:** one tool call per step for now. Documented as a tradeoff in the README.
+- **README:** kept up to date with every milestone.
+- **Layout:** uv, `src/` layout, CI with ruff, tests, gitleaks and a `ci-success` gate (done). Other items from the agent-chassis comparison (offline vs live evals, deterministic graders) are adopted as the milestones reach them.
+
+---
+
 ## 3. Milestones
 
 Each milestone ends runnable and committed. Closed checklist IDs are listed.
