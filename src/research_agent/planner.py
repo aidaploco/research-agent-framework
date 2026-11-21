@@ -12,7 +12,8 @@ Tools:
 Reply with a JSON object: reasoning (one sentence: why this tool and query), tool (a tool name,
 or "none" if no tool can help), query (the search query), options (an object; {{}} if none).
 Use "none" for questions unrelated to banking, finance, economics or their research literature.
-Write queries as short keywords, not full sentences."""
+Write queries as short keywords, not full sentences. For wikipedia, name the article you expect
+(for example "Basel III" or "Discount window"), not a description of the topic."""
 
 
 class Plan(BaseModel):
