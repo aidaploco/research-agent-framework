@@ -20,7 +20,8 @@ def main():
     mode.add_argument(
         "--max-steps",
         type=int,
-        default=DEFAULT_MAX_STEPS,
+        default=None,  # not DEFAULT_MAX_STEPS: argparse detects a conflict by comparing to the
+        # default with `is`, and a small int equal to the default looks like "not given"
         metavar="N",
         help=f"most searches the agent may make (default {DEFAULT_MAX_STEPS})",
     )
@@ -30,7 +31,11 @@ def main():
         help="one search, then answer: the same loop with --max-steps 1",
     )
     args = parser.parse_args()
-    max_steps = 1 if args.single_pass else args.max_steps
+    max_steps = args.max_steps
+    if args.single_pass:
+        max_steps = 1
+    elif max_steps is None:  # explicit None check: 0 is a (rejected) value, not "unset"
+        max_steps = DEFAULT_MAX_STEPS
     if max_steps < 1:
         parser.error("--max-steps must be at least 1")
     load_dotenv()

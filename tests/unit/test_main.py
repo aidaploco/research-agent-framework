@@ -46,16 +46,18 @@ def test_flags_can_follow_the_question(monkeypatch):
     assert seen == {"q": "What is X?", "n": 1}
 
 
-def test_single_pass_and_max_steps_are_mutually_exclusive(monkeypatch):
+@pytest.mark.parametrize("steps", ["1", "3", "5"])  # including the default: it must still conflict
+def test_single_pass_and_max_steps_are_mutually_exclusive(monkeypatch, steps):
     with pytest.raises(SystemExit) as exc:
-        run_main(monkeypatch, "--single-pass", "--max-steps", "3", "q")
+        run_main(monkeypatch, "--single-pass", "--max-steps", steps, "q")
     assert exc.value.code == 2
 
 
 def test_max_steps_must_be_positive(monkeypatch):
-    with pytest.raises(SystemExit) as exc:
-        run_main(monkeypatch, "--max-steps", "0", "q")
-    assert exc.value.code == 2
+    for bad in ("0", "-2"):
+        with pytest.raises(SystemExit) as exc:
+            run_main(monkeypatch, "--max-steps", bad, "q")
+        assert exc.value.code == 2
 
 
 def test_no_question_is_a_usage_error(monkeypatch):
