@@ -138,3 +138,28 @@ def test_missing_rate_limit_headers_do_not_break_pacing(monkeypatch, clock):
     llm.chat(MSG)
     llm.chat(MSG)
     assert clock.slept == []
+
+
+TOOL_GLITCH = '{"error":{"message":"Tool choice is none, but model called a tool","type":"invalid_request_error"}}'
+
+
+def test_a_model_that_tries_to_call_a_tool_is_retried_not_failed(monkeypatch, clock):
+    sent = post_returning(monkeypatch, FakeHTTPResponse(text=TOOL_GLITCH, status=400), ok())
+    assert llm.chat(MSG) == "hi"
+    assert len(sent) == 2 and clock.slept == [0.5]
+    assert llm.take_call_info().retries == 1
+
+
+def test_the_tool_call_glitch_gives_up_after_the_last_attempt_with_the_api_message(monkeypatch):
+    post_returning(monkeypatch, *[FakeHTTPResponse(text=TOOL_GLITCH, status=400)] * 3)
+    with pytest.raises(llm.LLMError, match="400.*called a tool"):
+        llm.chat(MSG)
+
+
+def test_other_400_errors_are_not_retried(monkeypatch):
+    sent = post_returning(
+        monkeypatch, FakeHTTPResponse(text="Bad request: invalid schema", status=400)
+    )
+    with pytest.raises(llm.LLMError, match="400"):
+        llm.chat(MSG)
+    assert len(sent) == 1

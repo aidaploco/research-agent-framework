@@ -168,6 +168,10 @@ def chat(messages, model=None, max_tokens=1500, retries=3, response_format=None)
                     f"trying again later. Original response: {r.text[:200]}"
                 )
             raise Retry(f"HTTP {r.status_code}", wait=wait)
+        if r.status_code == 400 and "called a tool" in r.text and n < retries - 1:
+            # A glitch of some models (seen with gpt-oss-20b): it tries to call a tool although none
+            # is offered, and the API rejects the reply. A fresh attempt usually works.
+            raise Retry("the model attempted a tool call", wait=0.5)
         raise LLMError(f"Groq API error {r.status_code}: {r.text[:300]}")
 
     def waited(reason: str, wait: float) -> None:
