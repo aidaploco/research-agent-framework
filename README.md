@@ -4,8 +4,9 @@ A research agent for a banking team. It takes a natural-language question, plans
 tool to use, searches (Wikipedia, arXiv), and prints an answer in which every sourced
 claim carries a checked citation. It runs on free tiers only: no paid API keys.
 
-> **Status: work in progress** (milestone M4 of [PLAN.md](PLAN.md)). Sections marked
-> *TBD* are filled in as milestones land. This README is updated with each milestone.
+> **Status: work in progress.** Milestones M0 to M4 are merged (see [PLAN.md](PLAN.md));
+> the multi-step loop, FRED, the 8 reference runs and the evaluation harness are next.
+> Sections marked *TBD* are filled in as those land. This README is updated with each milestone.
 
 ## Setup and run
 
@@ -44,10 +45,106 @@ The unit tests never touch the network: an autouse fixture fails any test that o
 socket, and they use shared fakes (`tests/fakes.py`): a scripted fake LLM, fake tools, and
 recorded HTTP responses. Live calls belong to the evaluation runs, not the unit tests.
 
+## Using the agent
+
+### Ask a question
+
+```sh
+uv run python main.py "What are the Basel III capital requirements for banks?"
+```
+
+Put the question in quotes. The agent works out which source suits it:
+
+| Kind of question | Where it goes | Example |
+|---|---|---|
+| Definitions, how a mechanism works, history | Wikipedia | *What is the Federal Reserve's discount window and how does it work?* |
+| Research literature, "recent papers" | arXiv | *What recent academic research exists on using machine learning for credit risk assessment?* |
+| Nothing it can help with | refused, with no search and no model call | *What is the best restaurant in New York City?* |
+
+Today a question gets **one** tool call. A question that needs two sources (for example *"explain
+yield curve inversions and find recent papers"*) is answered from whichever tool the planner
+picks; the multi-step loop that fixes this is the next milestone. There is no FRED tool yet, so
+questions about current economic data cannot be answered from live data.
+
+### Read the answer
+
+The answer goes to stdout; the plan and the trace path go to stderr. An abridged answer:
+
+```
+## From sources
+- Basel III requires banks to have a minimum Common Equity Tier 1 (CET1) ratio of 4.5% of risk-weighted assets. [W1]
+- Basel III introduced a minimum leverage ratio of 3%, calculated as Tier 1 capital divided by total leverage exposure. [W1]
+
+## Model inference / caveats
+- Inference: The framework combines quality, quantity, buffers, leverage limits and liquidity standards.
+- Caveat: The sources do not list updates to the standards after the initial publication.
+
+## Sources
+[W1] Basel III - https://en.wikipedia.org/wiki/Basel_III
+[W2] Basel Committee on Banking Supervision - https://en.wikipedia.org/wiki/Basel_Committee_on_Banking_Supervision
+```
+
+- **From sources:** statements taken from the retrieved sources. Each carries citation markers
+  (`[W1]`, `[A2]`: the letter is the tool, Wikipedia or arXiv, and the number is the source),
+  written by code after it checked the source exists and that every figure in the statement is
+  in it. The *Sources* list at the bottom gives title, ID and URL so you can open each one.
+- **Model inference / caveats:** what the model adds itself. Treat these as reasoning, not as
+  retrieved fact.
+- **Unverified** (only when present): statements the model made that failed the checks, kept
+  visible and labelled with the reason, never silently dropped. Do not rely on them.
+- **Notices** (only when present): written by code, for example that a tool was unavailable
+  and another one answered in its place.
+- **Cannot answer from sources:** the sources did not answer the question, or it was out of
+  scope. The agent says so instead of guessing.
+
+### Look at what the agent did
+
+Each run is traced; `uv run python -m research_agent.trace_cli show latest` explains every
+decision (see *Observability* below).
+
+### Configuration
+
+Set these in `.env` (copy `.env.example`) or in the environment.
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `GROQ_API_KEY` | yes | Free key from <https://console.groq.com>. |
+| `LLM_MODEL` | no | Groq model id; default `openai/gpt-oss-120b`. Only the default has been tested. The model must support JSON-schema output. |
+| `TRACE_DIR` | no | Where traces and the index are written; default `.traces`. |
+| `FRED_API_KEY` | no | Reserved for the FRED tool in a later milestone; not used yet. |
+
+### Troubleshooting
+
+- **`error: GROQ_API_KEY is not set`:** create `.env` from `.env.example` and add your key.
+- **`error: Groq API error 429`:** the free tier's rate limit (about 8,000 tokens per minute for
+  the default model). The client already retries with the `Retry-After` the API gives; wait a
+  minute and run again. Running several questions back to back can trigger it.
+- **A "Notices" section says arXiv was unavailable:** arXiv rate-limits and sometimes times
+  out. The agent retried three times with short backoff, then tried Wikipedia; the notice says
+  which sources the answer used. Run it again later for paper results.
+- **"Cannot answer from sources":** the retrieved articles did not contain the answer. Try
+  rewording with the topic's proper name (for example "Basel III", not "bank capital rules").
+  `trace_cli show latest` shows what was searched and retrieved.
+- **A slow run:** most of the time is the model and the network. arXiv adds up to about 40
+  seconds when it is rate-limiting.
+
+### Add a tool
+
+1. Write a class in `src/research_agent/tools/` that subclasses `Tool`: set `name`, a one-letter
+   `id_prefix`, a one-line `description` (the planner chooses tools by reading it), and, if it
+   takes options, an `options_model` (a Pydantic model with a `Field(description=...)` per
+   option). Implement `run(query, **options) -> list[Source]`, raising `ToolError` on failure.
+2. Register it in `default_registry()` in `tools/registry.py`.
+3. Test it with `FakeHTTPResponse` and `FakeTool` from `tests/fakes.py`.
+
+Nothing else changes: the planner prompt is generated from the registry, evidence IDs and
+citations come from the prefix, and failures flow through the same retry, fallback and notice
+path. (IDs stay unique even if two tools share a prefix; distinct letters just read better.)
+
 ## Architecture overview
 
 ```
-main.py                      CLI entry point
+main.py                      CLI entry point (clean error messages, exit code 1 on failure)
 src/research_agent/
   agent.py                   plan -> run one tool -> synthesize -> render
   planner.py                 LLM picks a tool + query (Pydantic Plan)
