@@ -43,22 +43,29 @@ class FakeLLM:
 
 
 class FakeTool(Tool):
-    """A tool that returns canned sources, or raises."""
+    """A tool that returns canned sources, or raises.
+
+    `result` is a list of sources, an Exception to raise, or a callable(query, **options)
+    returning either. `then` gives later results for later calls (the last one repeats).
+    """
 
     id_prefix = "F"
     description = "fake"
 
-    def __init__(self, result=None, name="fake", id_prefix="F"):
+    def __init__(self, result=None, name="fake", id_prefix="F", then=()):
         self.name = name
         self.id_prefix = id_prefix
-        self.result = [] if result is None else result
+        self._results = [[] if result is None else result, *then]
         self.calls: list[tuple[str, dict]] = []
 
     def run(self, query, **options):
         self.calls.append((query, options))
-        if isinstance(self.result, Exception):
-            raise self.result
-        return self.result
+        result = self._results[min(len(self.calls), len(self._results)) - 1]
+        if callable(result):
+            result = result(query, **options)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 def source(title="Title", url="https://example.org/a", text="body", **kw) -> Source:
@@ -75,8 +82,23 @@ def answer_json(*claims, inferences=(), caveats=(), refusal=""):
     }
 
 
-def plan_json(tool="wikipedia", query="q", reasoning="r", options=None):
-    return {"reasoning": reasoning, "tool": tool, "query": query, "options": options or {}}
+def plan_json(tool="wikipedia", query="q", reasoning="r", options=None, action="search"):
+    """A planner reply. Default: search `tool` for `query`."""
+    return {
+        "action": action,
+        "reasoning": reasoning,
+        "tool": tool,
+        "query": query,
+        "options": options or {},
+    }
+
+
+def finish_json(reasoning="enough evidence"):
+    return plan_json(action="finish", tool="", query="", reasoning=reasoning)
+
+
+def refuse_json(reasoning="Not a finance question."):
+    return plan_json(action="refuse", tool="", query="", reasoning=reasoning)
 
 
 class FakeHTTPResponse:

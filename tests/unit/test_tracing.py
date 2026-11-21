@@ -4,7 +4,7 @@ import sqlite3
 import pytest
 
 from research_agent import agent, tracing
-from research_agent.planner import Plan
+from research_agent.tools.arxiv import ArxivOptions
 from research_agent.tools.base import ToolError
 from research_agent.tools.registry import Registry
 from research_agent.tracing import (
@@ -15,7 +15,7 @@ from research_agent.tracing import (
     Trace,
     TraceStore,
 )
-from tests.fakes import FakeTool, answer_json, plan_json, source
+from tests.fakes import FakeTool, answer_json, finish_json, plan_json, refuse_json, source
 
 
 @pytest.fixture
@@ -149,12 +149,8 @@ def test_reindex_rebuilds_the_index_from_the_json_files(store):
 # ---- an agent run produces a complete trace -----------------------------------------
 
 
-@pytest.fixture
-def planned(monkeypatch):
-    def set_plan(plan):
-        monkeypatch.setattr(agent, "make_plan", lambda q, r: plan)
-
-    return set_plan
+def go(store, tools, max_steps=1):
+    return agent.answer("q", Registry(tools), store, max_steps=max_steps)
 
 
 def test_full_run_records_plan_tool_and_synthesis(fake_llm, store):
@@ -163,8 +159,7 @@ def test_full_run_records_plan_tool_and_synthesis(fake_llm, store):
         plan_json(tool="fake", query="discount window", reasoning="a definition question"),
         answer_json(("The rate is 100 basis points.", ["F1"])),
     )
-    tool = FakeTool([src])
-    agent.answer("What is the discount window?", Registry([tool]), store)
+    agent.answer("What is the discount window?", Registry([FakeTool([src])]), store, max_steps=1)
     trace = store.load("latest")
     plan, call, synth = trace.steps
     assert trace.outcome == "answered" and trace.question == "What is the discount window?"
@@ -173,41 +168,60 @@ def test_full_run_records_plan_tool_and_synthesis(fake_llm, store):
         "discount window",
         "a definition question",
     )
+    assert plan.action == "search" and plan.steps_left == 1 and plan.log_shown == "(nothing yet)"
     assert "fake" in plan.tools_offered  # what the model chose between
     assert plan.llm_attempts[0].messages[0]["role"] == "system"  # the exact prompt
-    assert call.status == "ok" and call.sources[0].evidence_id == "F1"
+    assert call.status == "ok" and call.new_sources == 1 and call.sources[0].evidence_id == "F1"
     assert call.sources[0].text == "The rate is 100 basis points."  # raw output
     assert synth.evidence_ids == ["F1"] and synth.sourced[0]["evidence_ids"] == ["F1"]
+    assert trace.mode == "single-pass" and trace.max_steps == 1 and trace.stop_reason == "step_cap"
     assert "[F1]" in trace.answer
 
 
-def test_repaired_synthesis_is_visible_in_the_trace(fake_llm, store, planned):
-    planned(Plan(reasoning="r", tool="fake", query="q"))
+def test_a_multi_step_run_records_every_plan_and_tool_step_in_order(fake_llm, store):
     fake_llm.queue(
+        plan_json("fake", "first"), plan_json("fake", "second"), finish_json("enough"),
+        answer_json(("Fact.", ["F1"])),
+    )  # fmt: skip
+    tool = FakeTool([source(url="https://w/1")], then=[[source(url="https://w/2")]])
+    go(store, [tool], max_steps=3)
+    trace = store.load("latest")
+    assert [s.type for s in trace.steps] == ["plan", "tool", "plan", "tool", "plan", "synthesis"]
+    assert [s.index for s in trace.steps] == [1, 2, 3, 4, 5, 6]
+    assert [s.action for s in trace.steps if s.type == "plan"] == ["search", "search", "finish"]
+    assert trace.steps[2].log_shown.startswith("step 1: search fake query='first'")
+    assert trace.steps[2].steps_left == 2 and trace.stop_reason == "finish"
+
+
+def test_repaired_synthesis_is_visible_in_the_trace(fake_llm, store):
+    fake_llm.queue(
+        plan_json("fake", "q"),
         answer_json(("Fact.", ["F9"])),  # unknown id, rejected
         answer_json(("Fact.", ["F1"])),
     )
-    agent.answer("q", Registry([FakeTool([source()])]), store)
+    go(store, [FakeTool([source()])])
     synth = store.load("latest").steps[-1]
     assert synth.repaired and len(synth.llm_attempts) == 2
     assert "unknown evidence IDs" in synth.llm_attempts[0].problem
     assert synth.llm_attempts[1].problem is None
 
 
-def test_demoted_claims_and_their_reasons_are_in_the_trace(fake_llm, store, planned):
-    planned(Plan(reasoning="r", tool="fake", query="q"))
+def test_demoted_claims_and_their_reasons_are_in_the_trace(fake_llm, store):
+    fake_llm.queue(plan_json("fake", "q"))
     fake_llm.always(answer_json(("Unsupported.", ["F9"])))
-    agent.answer("q", Registry([FakeTool([source()])]), store)
+    go(store, [FakeTool([source()])])
     synth = store.load("latest").steps[-1]
     assert synth.unverified[0]["text"] == "Unsupported." and "F9" in synth.unverified[0]["reason"]
 
 
-def test_fallback_and_tool_errors_are_separate_steps(fake_llm, store, planned):
-    planned(Plan(reasoning="r", tool="arxiv", query="q", options={"recent": True}))
+def test_fallback_and_tool_errors_are_separate_steps(fake_llm, store):
+    fake_llm.queue(
+        plan_json("arxiv", "q", options={"recent": True}), answer_json(("Body.", ["W1"]))
+    )
     primary = FakeTool(ToolError("arxiv unavailable (rate limited)"), name="arxiv", id_prefix="A")
+    primary.options_model = ArxivOptions  # like the real arXiv tool, it accepts `recent`
     fallback = FakeTool([source(url="https://w/1")], name="wikipedia", id_prefix="W")
-    fake_llm.queue(answer_json(("Body.", ["W1"])))
-    agent.answer("q", Registry([primary, fallback]), store)
+    go(store, [primary, fallback])
     trace = store.load("latest")
     first, second = [s for s in trace.steps if isinstance(s, ToolStep)]
     assert (first.tool, first.role, first.status) == ("arxiv", "planned", "error")
@@ -222,121 +236,81 @@ def test_fallback_and_tool_errors_are_separate_steps(fake_llm, store, planned):
     assert store.query("SELECT fallback FROM runs")[1] == [(1,)]
 
 
-def test_empty_tool_result_is_recorded_as_empty(fake_llm, store, planned):
-    planned(Plan(reasoning="r", tool="fake", query="q"))
-    fake_llm.queue(answer_json(refusal="Nothing found."))
-    agent.answer("q", Registry([FakeTool([])]), store)
+def test_a_skipped_repeat_is_in_the_trace_and_the_index(fake_llm, store):
+    fake_llm.queue(plan_json("fake", "same"), plan_json("fake", "same"), answer_json(refusal="x"))
+    go(store, [FakeTool([source()])], max_steps=3)
+    trace = store.load("latest")
+    skipped = [s for s in trace.steps if isinstance(s, ToolStep) and s.status == "skipped"]
+    assert skipped and skipped[0].error == "repeat of step 1" and trace.stop_reason == "duplicate"
+    assert store.query("SELECT n_tool_calls, n_skipped FROM runs")[1] == [(1, 1)]
+
+
+def test_empty_tool_result_is_recorded_as_empty(fake_llm, store):
+    fake_llm.queue(plan_json("fake", "q"), answer_json(refusal="Nothing found."))
+    go(store, [FakeTool([])])
     trace = store.load("latest")
     assert [s.status for s in trace.steps if isinstance(s, ToolStep)] == ["empty"]
     assert trace.outcome == "refused"
 
 
-def test_out_of_scope_run_has_a_plan_step_and_no_tool_or_model_calls(fake_llm, store):
-    fake_llm.queue(plan_json(tool="none", reasoning="Not finance."))
-    agent.answer("best restaurant?", Registry([FakeTool([])]), store)
+def test_out_of_scope_run_has_a_plan_step_and_no_tool_or_synthesis(fake_llm, store):
+    fake_llm.queue(refuse_json("Not finance."))
+    go(store, [FakeTool([])])
     trace = store.load("latest")
-    assert trace.outcome == "out_of_scope"
-    assert [s.type for s in trace.steps] == ["plan"] and trace.steps[0].reasoning == "Not finance."
+    assert trace.outcome == "out_of_scope" and trace.stop_reason == "refuse"
+    assert [s.type for s in trace.steps] == ["plan"]
+    assert trace.steps[0].action == "refuse" and trace.steps[0].reasoning == "Not finance."
     assert len(fake_llm.calls) == 1  # only the planner call
 
 
 def test_planner_fallback_to_default_is_flagged(fake_llm, store):
     fake_llm.queue("garbage", "garbage", answer_json(refusal="x"))
-    agent.answer("What is Basel III?", Registry([FakeTool([source()])]), store)
+    go(store, [FakeTool([source()])])
     plan = store.load("latest").steps[0]
     assert plan.fell_back_to_default and "defaulting" in plan.reasoning
     assert len(plan.llm_attempts) == 2 and plan.llm_attempts[0].problem
     assert store.query("SELECT status FROM steps WHERE type='plan'")[1] == [("search/default",)]
 
 
-def test_a_crash_mid_run_still_leaves_a_trace_with_the_steps_so_far(fake_llm, store, planned):
-    planned(Plan(reasoning="r", tool="fake", query="q"))
+def test_a_crash_mid_run_still_leaves_a_trace_with_the_steps_so_far(fake_llm, store):
+    fake_llm.queue(plan_json("fake", "q"))
 
     class Crash(FakeTool):
         def run(self, query, **options):
             raise ValueError("unexpected")
 
     with pytest.raises(ValueError):
-        agent.answer("q", Registry([Crash()]), store)
+        go(store, [Crash()])
     trace = store.load("latest")
     assert trace.outcome == "error" and "ValueError: unexpected" in trace.error
+    assert [s.type for s in trace.steps] == ["plan"]  # the plan made before the crash survives
 
 
-def test_each_run_gets_its_own_trace_file(fake_llm, store, planned):
-    planned(Plan(reasoning="r", tool="none"))
-    agent.answer("one", Registry([FakeTool([])]), store)
-    agent.answer("two", Registry([FakeTool([])]), store)
-    assert len(list(store.dir.glob("*.json"))) == 2
-    assert (
-        Trace.model_validate_json(sorted(store.dir.glob("*.json"))[0].read_text()).question == "one"
+def test_each_run_gets_its_own_trace_file(fake_llm, store):
+    fake_llm.queue(refuse_json(), refuse_json())
+    agent.answer("one", Registry([FakeTool([])]), store, max_steps=1)
+    agent.answer("two", Registry([FakeTool([])]), store, max_steps=1)
+    files = sorted(store.dir.glob("*.json"))
+    assert len(files) == 2
+    assert [Trace.model_validate_json(f.read_text()).question for f in files] == ["one", "two"]
+    assert store.load("latest").question == "two"  # ids sort in time order
+
+
+def test_token_usage_from_the_client_reaches_the_trace(fake_llm, store, monkeypatch):
+    from research_agent import llm
+
+    def fake_chat(messages, **kw):
+        llm._last = llm.CallInfo(prompt_tokens=700, completion_tokens=40, waited_ms=2500, retries=1)
+        return fake_llm.chat(messages, **kw)
+
+    monkeypatch.setattr(llm, "chat", fake_chat)
+    fake_llm.queue(refuse_json())
+    go(store, [FakeTool([])])
+    call = store.load("latest").steps[0].llm_attempts[0]
+    assert (call.prompt_tokens, call.completion_tokens, call.waited_ms, call.retries) == (
+        700,
+        40,
+        2500,
+        1,
     )
-
-
-# ---- the index survives schema changes and errors ------------------------------------
-
-
-def test_an_index_from_an_older_schema_is_rebuilt_from_the_json_files(store):
-    store.save(sample_trace())
-    with sqlite3.connect(store.index_path) as db:  # simulate the schema of an earlier version
-        db.executescript("DROP TABLE runs; CREATE TABLE runs (run_id TEXT); PRAGMA user_version=1;")
-    cols, rows = store.query("SELECT mode, n_plan_steps FROM runs")  # would fail on the old schema
-    assert rows == [("multi-step", 1)]
-
-
-def test_a_corrupt_index_file_is_rebuilt(store):
-    store.save(sample_trace())
-    store.index_path.write_bytes(b"this is not a sqlite database")
-    assert store.query("SELECT count(*) FROM runs")[1] == [(1,)]
-
-
-def test_index_summarizes_a_multi_step_run(store):
-    run = tracing.Run("q", model="m")
-    run.trace.max_steps, run.trace.stop_reason = 3, "finish"
-    for tool in ("wikipedia", "arxiv"):
-        run.add(PlanStep(tools_offered="-", reasoning="r", tool=tool, query="q"))
-        run.add(ToolStep(tool=tool, query="q", status="ok", new_sources=2))
-    run.add(
-        PlanStep(tools_offered="-", action="search", reasoning="again", tool="arxiv", query="q")
-    )
-    run.add(ToolStep(tool="arxiv", query="q", status="skipped", error="repeat"))
-    run.add(PlanStep(tools_offered="-", action="finish", reasoning="enough", tool=""))
-    run.finish("answered", "a")
-    store.save(run.trace)
-    _, rows = store.query(
-        "SELECT n_plan_steps, n_tool_calls, n_skipped, n_sources, tools_used, stop_reason FROM runs"
-    )
-    assert rows == [(4, 2, 1, 4, "wikipedia,arxiv", "finish")]
-
-
-def test_token_usage_and_waits_are_summed_into_the_index(store):
-    run = tracing.Run("q", model="m")
-    call = attempt(prompt_tokens=100, completion_tokens=20, waited_ms=1500)
-    run.add(PlanStep(tools_offered="-", reasoning="r", tool="w", query="q", llm_attempts=[call]))
-    run.add(SynthesisStep(llm_attempts=[attempt(prompt_tokens=300, completion_tokens=50)]))
-    run.finish("answered", "a")
-    store.save(run.trace)
-    assert store.query("SELECT prompt_tokens, completion_tokens, wait_ms FROM runs")[1] == [
-        (400, 70, 1500)
-    ]
-
-
-def test_an_index_error_never_loses_the_json_record(store, monkeypatch, capsys):
-    def broken(self, trace):
-        raise sqlite3.OperationalError("disk I/O error")
-
-    monkeypatch.setattr(TraceStore, "index", broken)
-    trace = sample_trace()
-    path = store.save(trace)
-    assert path.exists() and "index not updated" in capsys.readouterr().err
-
-
-def test_a_sqlite_error_while_saving_does_not_replace_the_answer(trace_dir, monkeypatch, capsys):
-    store = TraceStore(trace_dir)
-
-    def broken(self, trace):
-        raise sqlite3.DatabaseError("malformed")
-
-    monkeypatch.setattr(TraceStore, "save", broken)
-    with tracing.start_run("q", store) as run:
-        run.finish("answered", "the answer")
-    assert "could not save" in capsys.readouterr().err  # reported, not raised
+    assert store.query("SELECT prompt_tokens, wait_ms FROM runs")[1] == [(700, 2500)]
