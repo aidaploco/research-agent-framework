@@ -1058,3 +1058,49 @@ I'd build it to your rules.
 ## [2026-11-20 20:28:14] Prompt
 
 merge pr 5 and start m6, the fred api key is in .env
+
+## [2026-11-20 20:36:07] Response
+
+M6 is built and committed on `m6-fred` in two commits (`69da47b`, `dcae3c9`). It isn't pushed, and there's no PR. PR #5 for M5 is merged as `a549f8f`. Lint passes and all 217 tests pass on Python 3.11 and 3.12. I ran the FRED path live with your key.
+
+**Correction to my earlier message.** The arXiv-down snippet I gave you last turn crashed. `load_dotenv()` fails when run from stdin or `-c`. This corrected version works, and I just ran it end to end. It shows three attempts, the Notices section, and the Wikipedia fallback:
+```sh
+uv run python - <<'EOF'
+from dotenv import find_dotenv, load_dotenv
+load_dotenv(find_dotenv(usecwd=True))
+from research_agent.tools import arxiv
+arxiv.API = "http://127.0.0.1:9/x"
+from research_agent import agent
+print(agent.answer("What recent academic research exists on using machine learning for credit risk assessment?", max_steps=1))
+EOF
+```
+
+**What M6 adds**
+- **FRED tool:**
+  - I checked the endpoints and all 13 catalog series IDs against the live API first.
+  - It returns the latest value, the value about a year earlier, and the change. The change is computed in code, so the grounding check can verify it.
+  - The planner picks from a short catalog of common series, and the tool falls back to keyword search.
+  - Daily series are summarized.
+- **No key:** the tool fails instantly, with no network call, and says live data can't be retrieved. The planner then turns to Wikipedia. Code, not the model, adds a notice: no current figure is available, none is stated, and anything below from other sources may be out of date.
+- **No figure from memory:** the model's own inferences, caveats and refusal explanations are now held to the same figure check against all retrieved sources. A remembered rate lands under Unverified. In the no-key run the model wrote "the current (2026) rate", and it was caught.
+- **Your key is protected.** FRED puts the key in the URL, and error text from `requests` includes the URL. No error, notice or trace is built from exception text, and tests check that the key never leaks.
+
+**Q5 live, both ways** (saved in `outputs/`)
+- **With the key:** 4.1% in October 2026, down 0.3 points from 4.4% a year earlier, cited to the FRED series page.
+- **Without the key:** the notice appears, and a "Gaps" section says the current rate isn't in the sources. No current rate is stated. The model still listed dated historical rates (2017, 2019, 2020) from Wikipedia, even after I tightened the instruction twice. They're sourced and dated, but they aren't the "how the rate is measured" background you asked for. A prompt can only steer the model here. The README says so.
+
+**Bugs the live runs exposed.** The new free-text check wrongly demoted correct statements, and each case is now a regression test:
+- a subject stated in the previous clause
+- month names that don't match the source's ISO dates
+- a year that only appears inside an ISO date
+- the "19" in "COVID-19" read as a quantity
+
+**Known quirk:** FRED has no October 2025 unemployment figure, so "a year earlier" resolves to September 2025. The dates are always stated.
+
+Do you want me to push `m6-fred` and open the PR, and should I merge it too? M7 is next: running all 8 reference questions with committed outputs and traces.
+
+---
+
+## [2026-11-20 20:38:32] Prompt
+
+push, open the pr and merge it, then start m7
