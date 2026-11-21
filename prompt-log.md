@@ -731,3 +731,51 @@ are the tests calling live APIs? you should use fake LLM and search providers.
 for the grounding check, normalise the formats before comparing. can we also check if the number appears near a keyword from the claim to fix the confirmation of the number and right fact?
 
 for arxiv, does the agent say that arxiv is down and that it answered from wikipedia? and does it implement a retry with a short backoff and timeout?
+
+## [2026-11-20 19:52:26] Response
+
+All three changes are committed on `m3-structured-synthesis` as three commits, with 91 tests passing. I haven't pushed anything or opened a PR. The agent changes were checked live against Groq and Wikipedia. I simulated arXiv being down.
+
+**Are the tests calling live APIs?**
+No. I added a check that fails any test that opens a network socket, and all 59 tests at the time passed with it. They did stub at the function level, though, with repeated `monkeypatch` lambdas. The tests now use shared fakes in `tests/fakes.py`: a scripted fake LLM, fake tools, and recorded HTTP responses. The suite is 91 tests and runs in about 0.05 seconds because nothing really sleeps.
+
+**Grounding check**
+- **Normalized formats:** numbers are compared by value. This covers:
+  - `1,200` and `1200`
+  - `$46 billion` and `46,000,000,000`
+  - `4.5%` and `4.5 percent`
+  - `100 bps` and `100 basis points`
+  - "thirty" and `30`
+  - unicode dashes, no-break-space thousands separators, and ISO dates
+  - Units must agree, so 100 basis points does not ground "100%".
+- **Keyword proximity:** a matching number only counts if a keyword from the claim's own wording around that number appears near it in the source, within the same sentence. A source's "3 percent" beside "leverage ratio" no longer grounds a claim about a dividend cap.
+- **Three false demotions** of correct claims showed up in live runs and are now regression tests:
+  - **List layout:** a number alone on its own line, as in "…at all times of: 4.5%".
+  - **Stem collision:** "dividend" and "divided" both reduced to `divid`.
+  - **Years:** a plain year only needs to appear in the source.
+- **Prompt change:** I told the model to write one atomic fact per claim.
+- **Live result:** the Discount window and Basel III answers keep all claims sourced (9 and 11).
+- **Limits:**
+  - It's keyword proximity, not understanding.
+  - Two figures in one unpunctuated clause share context, so swapped figures there can pass.
+  - There's no unit conversion and no month-name dates.
+  - All of this is in the README.
+
+**arXiv failures**
+- **Before:** the agent did not say arXiv was down and had no fallback to Wikipedia. It only added a note to the model's prompt. Retries were not short either: 4 attempts, a 30-second timeout each, and a worst case of about 134 seconds.
+- **Retries now:** arXiv and Wikipedia make 3 attempts, with a 10-second timeout per request and a short backoff (arXiv 2s then 4s, Wikipedia 1s then 2s). The arXiv worst case is about 40 seconds. Failures name their reason, such as `rate limited`, `ReadTimeout` or `HTTP 503`.
+- **Fallback:** if the planned tool is still unavailable, the agent tries the other registered tools with the same query.
+- **Disclosure:** the code, not the model, prints a Notices section naming the failed tool and why. If another tool answered, it says the sources come from that tool.
+- **Live check:** I pointed arXiv at a dead port. It made 3 attempts, printed the notice, and fell back to Wikipedia. The model then refused honestly, because Wikipedia's article didn't cover the question. The run took 10.7 seconds.
+- **Tradeoff:** one earlier arXiv query needed about 25 seconds of retries to clear a rate limit. The shorter backoff means more runs fall back instead. The README says so.
+- **Not built:** circuit breakers and measuring quality under partial failure. That's the Tier 3 reliability item. A tool that works but finds nothing doesn't trigger a fallback; refining the search is M5's job.
+
+**Not run live:** Q4, Q5, Q6 and Q8.
+
+Do you want me to push the branch and open a PR for M3?
+
+---
+
+## [2026-11-20 19:54:34] Prompt
+
+yeah push open and merge. also tell me what's next based on the plan
