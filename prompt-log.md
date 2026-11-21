@@ -433,3 +433,160 @@ Later milestones, in order: M3 cited and split synthesis with a scope check for 
 ## [2026-11-20 19:03:02] Prompt
 
 you can clean up the branch. yes start with a single tool per step for now, make sure to mention it as a trade off in the readme (you also still need to add the part about cloud model vs local model btw, make sure to keep the readme updated). start m2 on a new branch
+
+## [2026-11-20 19:06:30] Response
+
+I've cleaned up the old branch, started `m2-tools-planner`, and built M2 and committed it as `7ac5f87`. It isn't pushed, and there's no PR yet. Lint passes and all 28 unit tests pass. I also ran it against the live APIs.
+
+**Branch cleanup:** `m1-thin-slice` is deleted locally and on the remote.
+
+**What M2 adds**
+- **Tool interface:**
+  - `Tool` is a base class with a `name`, a one-line `description` for the planner, optional `options`, and `run(query)`. It returns `Source` objects with title, URL, text, an ID where one exists, and metadata.
+  - A registry lists the tools, and the planner prompt is generated from it. Adding a tool is one class plus one registration line.
+- **Tools:**
+  - Wikipedia now implements the interface.
+  - The new arXiv tool returns paper IDs, authors and dates, with a `recent` option to sort newest-first.
+- **Planner:**
+  - The LLM picks one tool and a query as JSON.
+  - The reply is validated. A bad reply is retried once with the error, then falls back to a default tool.
+  - The tool `none` lets it decline out-of-scope questions.
+
+**Live results**
+- **Discount window (Q1):** the planner picked Wikipedia with a good query and answered correctly. This is the question that failed under the old query rewrite.
+- **Credit-risk research (Q3):** it picked arXiv and returned real, dated papers with arXiv IDs.
+- **Restaurant (Q7):** it declined without calling any tool.
+
+**Things you should know**
+- **A real bug caught by a test:** the planner treated invalid `options` (`[]`) as empty and accepted them. I fixed the parser, not the test.
+- **arXiv rate limits:** arXiv rate-limits hard. It replies "Rate exceeded." with a 200 status, and one query took about 25 seconds of retries. The tool now spaces requests and backs off, and this is in the README.
+- **Citation markers:** the model still sometimes writes its own markers like `【1†L1-L4】` in the answer text. The source list at the bottom is correct. I've listed this under limitations for M3.
+- **Cross-tool questions:** with one tool call per step and no loop until M5, cross-tool questions like Q6 are answered from a single tool today. The README says so.
+
+**README and PLAN.md**
+- The README now has the required sections: setup and run, architecture and design decisions, performance summary, limitations and what I'd do differently.
+- The cloud-vs-local table is there, and so is the single-tool-per-step tradeoff.
+- Groq limits are as I measured them (8,000 tokens/min and a 1,000-request limit, request window unverified).
+- A local Ollama backend is described as untested.
+- Performance and "do differently" are marked TBD.
+- PLAN.md now records your decisions.
+
+**Next**
+1. M3: cited, split synthesis with a scope check, and normalizing the citation markers.
+2. Then tracing (M4) and the multi-step loop (M5).
+
+Tell me if you want me to push `m2-tools-planner` and open a PR first.
+
+---
+
+## [2026-11-20 19:20:13] Prompt
+
+check what we have in ai-rag-app in the parent folder with regards to rate limiting and if it makes sense to apply it here. don't write any code yet, just report your findings. 
+
+as for the citation markers, make the model return structured claims. have it output lists like {text: "...", evidence_ids: ["W1, A2"]}. 
+
+also, you should use Pydantic structured outputs where applicable.
+
+## [2026-11-20 19:21:26] Response
+
+I changed nothing this turn. These are my findings and the changes I'd make.
+
+## 1. Rate limiting in ai-rag-app
+
+I read the code in `rag-sdk/rag_sdk/core/` (`resilience.py`, `throttling.py`), where they're used in `providers/openai.py`, and their tests. I didn't run their tests.
+
+- **Retry (`with_retry`):**
+  - It wraps tenacity, retries only the exception types you name (the OpenAI provider passes `RateLimitError`), and waits on exponential backoff with jitter.
+  - It honors `Retry-After`, read from either an exception attribute or the response headers.
+  - It logs each retry and counts them in OpenTelemetry. It's used on the OpenAI embed and chat calls.
+- **Throttling:** an `AsyncLimiter(tps, 1)` plus a concurrency semaphore, with an optional metered variant. **The repo's own README says no provider uses it yet**, so it's untested in practice.
+- **A bug I spotted:** when `Retry-After` is present, `_wait` returns it verbatim and ignores `max_wait`. If a daily quota is exhausted and the header says hours, it will sleep for hours. I haven't reproduced it.
+
+**What makes sense here**
+
+| Piece | Verdict | Why |
+|---|---|---|
+| `Retry-After` first, jittered exponential backoff as fallback | **Adopt, with a cap** | I'd cap the header value at about 60s and fail fast with a clear error beyond that. |
+| One shared retry helper | **Adopt** | `llm.py` and `arxiv.py` each have their own retry loop. One sync helper, with tenacity as the likely tool, removes the duplication. |
+| TPS limiter and semaphore | **Skip as is** | Our binding limit is **tokens per minute** (8,000 on Groq), not requests per second. We also run serially, so a concurrency cap isn't needed. It's async, and our code is sync. |
+| OTel metrics | **Skip** | Retries and waits should be recorded as steps in our own trace (M4), where they explain the run. |
+| Proactive token budget | **New, not from ai-rag-app** | Groq returns `x-ratelimit-remaining-tokens` and the reset time on every response. I'd sleep before the request when the next prompt wouldn't fit, instead of waiting for a 429. |
+
+**When it matters:** a single CLI question makes about two LLM calls, so it rarely hits the limit. It will in the multi-step loop (M5) and in the 8 reference runs and 15+ question eval (M7–M8). A rough estimate is a couple of questions per minute.
+
+**Plan:** the retry helper, the token budget and the Retry-After cap go in M5, when multiple calls per question make them necessary. arXiv keeps its 3-second spacing and moves onto the shared helper. I'd also record retries and waits in the trace.
+
+## 2. Structured claims
+
+I'll use your shape: each claim has `text` and `evidence_ids`.
+
+- **ID format:** your example was `["W1, A2"]`, a single string with a comma. I'll assume you meant separate IDs, `["W1", "A2"]`. Tell me if you meant otherwise.
+- **ID prefixes:**
+  - Each tool declares its own `id_prefix`: W for Wikipedia, A for arXiv, F for FRED. This avoids clashes when a third tool starts with the same letter.
+  - Numbers are assigned per prefix and stay stable across steps in the M5 loop, so W1 still means the same source on step three.
+  - The context shows sources as `[W1] Title`.
+- **What the model returns:**
+  - `claims`: the `{text, evidence_ids}` list, with at least one evidence ID each.
+  - `inferences`: reasoning not backed by a source.
+  - `caveats` and a refusal flag with a reason, so Q7-style questions have an explicit path.
+- **Rendering and checks done by code:**
+  - Code writes the `[W1][A2]` markers into the output, so the `【1†L1-L4】` artifacts disappear. I'd also strip any marker the model puts inside claim text.
+  - Every `evidence_id` is checked against the run's actual sources. This is a deterministic attribution check that the eval harness (M8) can reuse.
+  - A claim citing an unknown ID gets one repair retry. If it still fails, I'd move it to a visible "unverified" line instead of silently dropping it. I'd like your call on that policy.
+  - A numeric grounding check: any number in a claim must appear in the cited source's text. This backs your FRED rule, so no unemployment figure can appear unless a retrieved source contains it.
+
+**Probe result:** I tested Groq's schema-constrained output on `openai/gpt-oss-120b` with `strict: true` and `reasoning_effort: low`. It returned valid JSON matching the schema and cited only W1, correctly ignoring the unrelated A1 source. Plain `json_object` mode also works. I'd use `json_schema` generated from the Pydantic model, still validate with Pydantic, and retry with the validation error on failure. That retry mechanism already exists in the planner.
+
+## 3. Where Pydantic applies
+
+- **Plan:** replaces the dataclass and the hand-written `parse_plan` checks.
+- **Answer, Claim and refusal:** replace the free-text synthesis.
+- **Source:** moves from a dataclass to a model, so M4 traces serialize without extra code.
+- **Tool options:** each tool declares an options model, for example `ArxivOptions(recent: bool = False)`. It generates the schema shown to the planner and validates the planner's options, replacing the ad-hoc `options` dict of strings.
+- **Trace records (M4) and eval cases and results (M8):** models, so `cases.yaml` is validated on load.
+- **Skip:** `pydantic-settings`. There are only three env vars, so it isn't worth it.
+- **Dependency:** `pydantic` is a new dependency in `pyproject.toml`.
+
+## What I'd change in the plan
+- **M3 grows:** structured synthesis, claim validation, a scope check and Pydantic for Plan, Answer and Source. The inline-marker limitation in the README goes away.
+- **M5 gets:** the shared retry helper, the token budget and the Retry-After cap.
+- **PLAN.md and README:** both updated with the above when I do the work.
+
+## Decisions for you
+1. A claim citing an unknown ID: retry once, then show it as "unverified". Or drop it?
+2. Should M3 go on a new branch, and should I push and PR `m2-tools-planner` first? M2 is still local only.
+
+---
+
+## [2026-11-20 19:26:49] Prompt
+
+don't drop it, retry once and if the ID is still unknown, move the claim out of the sourced part and label it unverified. also mark this in the readme: dropping silently hides info, and i think demoting fits the spec better because retrieved info is separated from the model's own inference.
+
+i think the rest looks good, does it make sense to add all this to m2-tools-planner, or is this more M3 work?
+
+## [2026-11-20 19:27:04] Response
+
+It's M3 work, so I'd keep it off `m2-tools-planner`.
+
+- **M2 is done.** It's committed and tested, and it matches its scope in PLAN.md: the tool interface, the registry, the arXiv tool and the planner. Structured claims, evidence-ID validation, the scope check and refusals are exactly M3's "cited, split synthesis" milestone.
+- **History is graded.** One milestone per branch and PR shows the project progressing step by step. Folding M3 into M2 would blur that.
+- **One exception, which I'd still put on the M3 branch.** Converting `Plan`, `Source` and the tool options to Pydantic touches M2 code. I'd make it the first commit on the M3 branch, labelled as a refactor, then add the structured synthesis in later commits. That keeps the refactor easy to review.
+
+**Your policy on unknown evidence IDs.** A claim citing an ID that isn't in the run's sources gets one repair retry. If the ID is still unknown, the claim moves out of the sourced section and is labelled unverified. It is never dropped. I'll record this in PLAN.md and write it into the README with your reasoning: silently dropping hides information, and demoting keeps retrieved facts separate from the model's own inference, which is what the spec asks for. I'll write it into the README in the same commit as the behavior, so the README doesn't describe something that isn't built yet.
+
+**Order I'd follow:**
+1. Push `m2-tools-planner` and open a PR. CI takes about a minute.
+2. Merge the PR once CI passes. I'd use a merge commit again, so the individual commits stay in history.
+3. Branch `m3-structured-synthesis` from the updated `main`.
+4. On that branch, make the Pydantic refactor commit first, then the structured claims and validation.
+5. The rate-limit work stays in M5.
+
+The alternative is to branch M3 off M2 now and skip the wait. That would give a stacked PR that has to be retargeted after M2 merges, so I'd avoid it.
+
+Do you want me to push M2, open the PR and merge it once CI passes, then start M3?
+
+---
+
+## [2026-11-20 19:27:55] Prompt
+
+okay push and open a PR, also tell me how i can test this locally myself
