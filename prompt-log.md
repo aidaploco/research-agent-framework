@@ -884,3 +884,63 @@ Do you want me to push the branch and open a PR for M4?
 ## [2026-11-20 20:03:01] Prompt
 
 make sure the readme is up to date and it explains how to use this. then push, open the pr, and merge. then start M5
+
+## [2026-11-20 20:19:29] Response
+
+PR #4 for M4 is merged, with the README now explaining how to use the agent. M5 is built and committed on `m5-multistep-loop` in six commits. 177 unit tests pass, and I ran the multi-step loop live. I haven't pushed M5 or opened a PR.
+
+**M4 wrap-up**
+- **CLI error:** with a missing API key the CLI printed a stack trace, so `main.py` now prints a one-line `error: …` and exits 1.
+- **README:** I added a usage guide covering:
+  - what to ask
+  - how to read each answer section
+  - the configuration variables
+  - troubleshooting
+  - how to add a tool
+- **Merge:** CI was green, and the PR was merged as `775a126`.
+- **Branch:** I did not delete `m4-tracing`.
+
+**What M5 does**
+- **Planner:** it chooses `search`, `finish` or `refuse` each step, and sees a compact log of earlier steps with titles but no source text.
+- **Rules in code:**
+  - Refuse is allowed only before any evidence exists, and finish only after some does.
+  - A repeated search is never executed. It's recorded as skipped, and the loop stops.
+  - A tool that failed is not offered again.
+  - Fallback to another tool happens only on the last allowed step.
+  - The loop stops on finish, the step cap, a repeat, two steps with nothing new, or a spent budget. The trace records the reason.
+- **CLI:** the default is up to 3 searches. `--single-pass` is the same loop with the cap at 1, so the comparison is fair. `--max-steps N` sets the cap.
+- **Evidence budget:** one budget per run keeps the model's prompt within Groq's per-minute limit.
+- **Token pacing:** the client waits for the token allowance to refill instead of failing. It refuses a request that could never fit, and it caps `Retry-After` at 30 seconds.
+- **Shared retry helper:** one helper now runs the retries for arXiv, Wikipedia and the model client, and records every retry in the trace.
+
+**Groq limits, measured**
+- An oversized request returned HTTP 413. The limit counts prompt tokens plus `max_completion_tokens`, not just the prompt.
+- The request limit of 1,000 appears to reset daily, and the README now says so.
+
+**Single-pass vs multi-step, live, one run each**
+- **Yield curve, then papers (Q6):**
+  - Single-pass returned 4 claims from arXiv only.
+  - Multi-step added a Wikipedia definition first and returned 7 claims.
+  - The cost was about 5× the tokens and 4× the time, mostly waiting on the token allowance.
+- **Fed 2008 vs COVID-19 (Q4):**
+  - Single-pass refused after arXiv matched nothing.
+  - Multi-step gave 4 sourced claims, 1 unverified claim, and a clear note that the COVID-19 side is missing.
+  - It's still not a real comparison: the planner called weak evidence "sufficient". The README says so.
+
+**Two bugs the live runs exposed.** I fixed both with prompt changes and kept a test for each:
+- The synthesis prompt made the model discard the half of an answer it could support.
+- The planner repeated a failed query instead of changing it.
+
+**Also fixed:**
+- **Trace index:** `index.db` now rebuilds itself when its schema is old or the file is corrupt. A sqlite error can no longer replace your answer or lose the JSON record.
+- **Docs:** every "one tool call per question" statement in the README is corrected.
+
+Not run live: Q5 (needs FRED) and Q8.
+
+Do you want me to push `m5-multistep-loop`, open the PR, and merge it? M6 (the FRED tool) is next, and I'll need your FRED key for the keyed path.
+
+---
+
+## [2026-11-20 20:21:36] Prompt
+
+delete the m4 branch. push and open the PR and tell me how i can test what we've built so far locally
