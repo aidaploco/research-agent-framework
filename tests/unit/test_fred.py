@@ -11,7 +11,9 @@ from research_agent.tools.base import ToolError
 from research_agent.tools.fred import FredTool, build_text
 from tests.fakes import FakeHTTPResponse
 
-KEY = "SECRETKEY0123456789abcdef01234567"
+# An obviously fake, low-entropy value: a realistic-looking key in a test would (rightly) trip
+# the secret scanner in CI. The tests only need something distinctive to search for.
+KEY = "fake-key-for-tests"
 
 UNRATE = {
     "id": "UNRATE",
