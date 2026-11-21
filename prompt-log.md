@@ -178,3 +178,31 @@ Use the advisor model for this. Stop when PLAN.md is done and wait for my furthe
 ## [2026-11-20 18:22:54] Prompt
 
 Fix the response hook first, make sure to add the previous response as well, then do M0
+
+## [2026-11-20 18:24:06] Response
+
+The response hook is fixed and the previous responses are backfilled. M0 is done and committed. I haven't seen the response hook fire live yet.
+
+**Response hook**
+- **Cause:** the hook was running without errors but writing nothing. The hook's `session_id` didn't match the transcript's. The script quietly exited when it couldn't find the transcript file.
+- **Fix:** `.claude/hooks/log-prompt.sh` now uses `last_assistant_message` when the harness provides it. Otherwise it falls back to the newest transcript for the project and retries while the final message is written. It also writes what it receives to `.claude/hooks/debug.log`, which is gitignored.
+- **Testing:** it passed on synthetic input and on a truncated copy of the real transcript. The live check is a "Response" entry for this turn in `prompt-log.md`. If it's missing, `debug.log` will show why.
+- **Backfill:** the first exchange and my replies to the "testing" prompt and the spec prompt are in `prompt-log.md`. Each is labelled "(reconstructed)" with approximate timestamps.
+- **Still not logged:** tool calls and their output. Only prompts and my prose replies are captured.
+
+**M0**
+- I ran `git init -b main` and committed `a721411`. It contains `.claude/` (hook script and settings), `.gitignore`, `PLAN.md` and `prompt-log.md`.
+- The commit is authored by Aida Ploco only, with no Claude trailer. I left off the trailer the session reminder asks for, as your CLAUDE.md requires. The commit is signed.
+- The git config email is `aidaploco.ap@gmail.com`, not your `getsupernal.ai` address. I used the config as it is. Tell me if you want the other one on these commits.
+- I updated `PLAN.md`'s risk section to reflect the fix.
+- **Not pushed.** There's no remote and no GitHub repo yet.
+
+`prompt-log.md` will show as modified again after this turn, because the hooks append to it. I'll fold it into the next milestone commit.
+
+I'm waiting on your answers to the earlier decisions before M1: LLM backend, Tier 3 item, and the FRED-key fallback. Git is settled.
+
+---
+
+## [2026-11-20 18:25:42] Prompt
+
+create a public remote repo and push what we have so far. then set up branch protection to prevent direct pushes to main
