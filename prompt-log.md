@@ -590,3 +590,63 @@ Do you want me to push M2, open the PR and merge it once CI passes, then start M
 ## [2026-11-20 19:27:55] Prompt
 
 okay push and open a PR, also tell me how i can test this locally myself
+
+## [2026-11-20 19:28:49] Response
+
+I pushed `m2-tools-planner` and opened PR #2: https://github.com/aidaploco/research-agent-framework/pull/2. CI passed on GitHub: lint, tests on Python 3.11 and 3.12, gitleaks, and `ci-success`. I haven't merged it, since you only asked for the push and PR. I also committed the latest `prompt-log.md` before pushing, so the log in the PR is current.
+
+## Testing it yourself
+
+**Setup (once)**
+```sh
+cd /Users/aida/vscode/research-agent-framework
+git checkout m2-tools-planner      # if you're not already on it
+uv sync                            # installs dependencies from uv.lock
+```
+Your `.env` already has the Groq key. `.env.example` shows the format if you set it up elsewhere.
+
+**1. Offline checks.** These need no network or key and take about a second:
+```sh
+uv run pytest -q                                   # 28 tests
+uv run ruff format --check . && uv run ruff check .
+```
+
+**2. Live runs.** Each takes a few seconds, and arXiv questions can take longer if arXiv rate-limits you:
+```sh
+uv run python main.py "What is the Federal Reserve's discount window and how does it work?"
+uv run python main.py "What recent academic research exists on using machine learning for credit risk assessment?"
+uv run python main.py "What is the best restaurant in New York City?"
+```
+The `[plan]` line is printed to stderr and shows which tool the planner picked and why. To see only the answer:
+```sh
+uv run python main.py "What are the Basel III capital requirements for banks?" 2>/dev/null
+```
+
+**What to look for**
+- The discount-window question should plan `wikipedia` and cite the "Discount window" article.
+- The research question should plan `arxiv` and cite papers with `arXiv:` IDs and URLs you can open.
+- The restaurant question should plan `none`, call no tool, and say there are no sources.
+- Every answer should have a "From sources" section and a separate "Model inference / caveats" section.
+
+**Known behavior that isn't a bug**
+- Inline markers like `【1†L1-L4】` still appear. M3 fixes them.
+- A question that needs two tools, like Q6 (yield curves plus recent papers), is answered from one tool. The loop for that is M5.
+- If arXiv says "Rate exceeded", the tool retries for about 25 seconds. If it still fails, the answer says the tool was unavailable.
+- With no `GROQ_API_KEY`, you get a clear error, not a crash.
+
+**Poking at the planner without a full run**
+```sh
+uv run python -c "
+from dotenv import load_dotenv; load_dotenv()
+from research_agent.planner import make_plan
+from research_agent.tools.registry import default_registry
+print(make_plan('How do yield curve inversions relate to recessions?', default_registry()))"
+```
+
+Say the word and I'll merge PR #2 and start M3.
+
+---
+
+## [2026-11-20 19:30:27] Prompt
+
+merge pr 2 and start m3

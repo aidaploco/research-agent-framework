@@ -9,6 +9,7 @@ import time
 import xml.etree.ElementTree as ET
 
 import requests
+from pydantic import BaseModel, ConfigDict, Field
 
 from .base import Source, Tool, ToolError
 
@@ -49,7 +50,7 @@ def parse_feed(xml_text: str, max_chars: int = 1200) -> list[Source]:
                 title=title,
                 url=abs_url.replace("http://", "https://"),
                 text=summary[:max_chars],
-                id=f"arXiv:{arxiv_id}",
+                native_id=f"arXiv:{arxiv_id}",
                 meta={
                     "authors": authors,
                     "published": (e.findtext("a:published", "", NS) or "")[:10],
@@ -59,13 +60,20 @@ def parse_feed(xml_text: str, max_chars: int = 1200) -> list[Source]:
     return sources
 
 
+class ArxivOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    recent: bool = Field(False, description="true to sort newest first instead of by relevance")
+
+
 class ArxivTool(Tool):
     name = "arxiv"
+    id_prefix = "A"
     description = (
         "Academic papers (abstracts, authors, dates). Best for research literature and "
         "'recent papers' questions. Query: 3-6 topical keywords, no filler words."
     )
-    options = {"recent": "true to sort newest first instead of by relevance"}
+    options_model = ArxivOptions
 
     def __init__(self, max_results: int = 5, retries: int = 4):
         self.max_results = max_results

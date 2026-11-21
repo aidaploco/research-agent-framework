@@ -21,7 +21,7 @@ def test_build_query_rejects_empty():
 
 def test_parse_feed_extracts_ids_authors_dates_and_collapses_whitespace():
     sources = arxiv.parse_feed(FIXTURE.read_text())
-    assert [s.id for s in sources] == ["arXiv:2501.01234v2", "arXiv:2410.99999v1"]
+    assert [s.native_id for s in sources] == ["arXiv:2501.01234v2", "arXiv:2410.99999v1"]
     assert sources[0].title == "Deep Learning for Credit Risk Assessment"
     assert sources[0].url == "https://arxiv.org/abs/2501.01234v2"
     assert sources[0].meta == {"authors": ["Ada Example", "Bo Sample"], "published": "2025-01-05"}

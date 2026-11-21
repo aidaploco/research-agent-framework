@@ -10,6 +10,7 @@ HEADERS = {"User-Agent": "research-agent-framework/0.1 (educational project)"}
 
 class WikipediaTool(Tool):
     name = "wikipedia"
+    id_prefix = "W"
     description = (
         "Encyclopedia articles. Best for definitions, how institutions and mechanisms work, "
         "history and general background. Query: a short topic name (2-5 words)."

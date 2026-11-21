@@ -1,8 +1,6 @@
 """Planner: asks the LLM which tool to call (one per step) and with what query."""
 
-import json
-import re
-from dataclasses import dataclass, field
+from pydantic import BaseModel, ValidationError
 
 from . import llm
 from .tools.registry import Registry
@@ -11,45 +9,38 @@ PLANNER_SYSTEM = """You plan research for a bank's research team. Choose ONE too
 Tools:
 {tools}
 
-Reply with ONLY a JSON object:
-{{"reasoning": "<one sentence: why this tool and query>", "tool": "<tool name, or \\"none\\" if no tool can help>", "query": "<search query>", "options": {{}}}}
+Reply with a JSON object: reasoning (one sentence: why this tool and query), tool (a tool name,
+or "none" if no tool can help), query (the search query), options (an object; {{}} if none).
 Use "none" for questions unrelated to banking, finance, economics or their research literature.
 Write queries as short keywords, not full sentences."""
 
 
-@dataclass
-class Plan:
+class Plan(BaseModel):
     reasoning: str
     tool: str  # a registered tool name, or "none"
     query: str = ""
-    options: dict = field(default_factory=dict)
+    options: dict[str, bool | str | int] = {}
 
 
-class PlanError(ValueError):
-    pass
+def check_plan(plan: Plan, registry: Registry) -> str | None:
+    """Semantic validation against the registry. Returns a problem the LLM can act on, or None.
 
-
-def parse_plan(text: str, registry: Registry) -> Plan:
-    """Validate the planner's reply. Raises PlanError with a message the LLM can act on."""
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if not m:
-        raise PlanError("reply contained no JSON object")
+    On success the options are replaced by the tool's validated, type-coerced options.
+    """
+    plan.tool = plan.tool.strip().lower()
+    if plan.tool == "none":
+        return None
+    if plan.tool not in registry.names():
+        return f"unknown tool {plan.tool!r}; choose one of {registry.names()} or 'none'"
+    plan.query = plan.query.strip()
+    if not plan.query:
+        return "query is empty"
     try:
-        data = json.loads(m.group(0))
-    except json.JSONDecodeError as e:
-        raise PlanError(f"invalid JSON: {e}") from e
-    tool = str(data.get("tool", "")).strip().lower()
-    if tool != "none" and tool not in registry.names():
-        raise PlanError(f"unknown tool {tool!r}; choose one of {registry.names()} or 'none'")
-    query = str(data.get("query", "")).strip()
-    if tool != "none" and not query:
-        raise PlanError("query is empty")
-    options = data.get("options")
-    if options is None:
-        options = {}
-    if not isinstance(options, dict):
-        raise PlanError("options must be an object")
-    return Plan(str(data.get("reasoning", "")).strip(), tool, query, options)
+        opts = registry.get(plan.tool).options_model.model_validate(plan.options)
+    except ValidationError as e:
+        return f"invalid options for {plan.tool}: {e.errors()[0]['msg']} ({plan.options})"
+    plan.options = opts.model_dump()
+    return None
 
 
 def make_plan(question: str, registry: Registry, attempts: int = 2) -> Plan:
@@ -57,20 +48,24 @@ def make_plan(question: str, registry: Registry, attempts: int = 2) -> Plan:
         {"role": "system", "content": PLANNER_SYSTEM.format(tools=registry.describe())},
         {"role": "user", "content": question},
     ]
-    error = ""
-    for _ in range(attempts):
-        reply = llm.chat(messages, max_tokens=300)
-        try:
-            return parse_plan(reply, registry)
-        except PlanError as e:
-            error = str(e)
-            messages += [
-                {"role": "assistant", "content": reply},
-                {
-                    "role": "user",
-                    "content": f"That was not valid: {error}. Reply with only the JSON.",
-                },
-            ]
+    try:
+        # Not strict: the options object is free-form, which strict schemas do not allow.
+        plan, problem = llm.structured(
+            messages,
+            Plan,
+            strict=False,
+            check=lambda p: check_plan(p, registry),
+            attempts=attempts,
+            max_tokens=300,
+        )
+        if problem is None:
+            return plan
+    except llm.StructuredOutputError as e:
+        problem = str(e)
     # Fall back to a safe default rather than failing the whole run.
     first = registry.names()[0]
-    return Plan(f"planner output invalid ({error}); defaulting to {first}", first, question)
+    return Plan(
+        reasoning=f"planner output invalid ({problem}); defaulting to {first}",
+        tool=first,
+        query=question,
+    )

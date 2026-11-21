@@ -6,33 +6,42 @@ Adding a tool means writing one subclass and registering it.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ToolError(RuntimeError):
     """A tool could not complete (network failure, rate limit, bad response)."""
 
 
-@dataclass(frozen=True)
-class Source:
+class Source(BaseModel):
     """One retrieved item, with what a reader needs to verify it."""
+
+    model_config = ConfigDict(frozen=True)
 
     tool: str  # which tool produced it
     title: str
     url: str
     text: str
-    id: str = ""  # stable identifier where one exists (e.g. an arXiv ID)
-    meta: dict = field(default_factory=dict)  # e.g. authors, published date
+    native_id: str = ""  # the source's own identifier where one exists (e.g. an arXiv ID)
+    meta: dict = Field(default_factory=dict)  # e.g. authors, published date
 
     def citation(self) -> str:
-        label = f"{self.title} ({self.id})" if self.id else self.title
+        label = f"{self.title} ({self.native_id})" if self.native_id else self.title
         return f"{label} - {self.url}"
+
+
+class NoOptions(BaseModel):
+    """Options model for tools that take none."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class Tool(ABC):
     name: str
+    id_prefix: str  # evidence IDs are this prefix plus a number: W1, A2, ...
     description: str  # shown to the planner: what this tool is good for
-    options: dict[str, str] = {}  # optional run() keyword arguments -> description
+    options_model: type[BaseModel] = NoOptions  # validates and documents run() options
 
     @abstractmethod
     def run(self, query: str, **options) -> list[Source]:
