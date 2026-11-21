@@ -5,6 +5,7 @@ description = "Multi-tool research agent: plans, searches Wikipedia/arXiv/FRED, 
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "pydantic>=2.14.4",
     "python-dotenv>=1.0",
     "requests>=2.31",
 ]

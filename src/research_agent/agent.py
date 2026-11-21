@@ -1,54 +1,59 @@
-"""M2: plan one tool call, run it, then synthesize a cited answer."""
+"""M3: plan one tool call, run it (falling back if it is down), then synthesize cited claims."""
 
 import sys
 
-from . import llm
-from .planner import make_plan
-from .tools.base import Source, ToolError
+from .evidence import EvidenceStore
+from .planner import Plan, make_plan
+from .synthesis import Synthesis, render, synthesize
+from .tools.base import ToolError
 from .tools.registry import Registry, default_registry
 
-SYSTEM = """You are a careful research assistant for a bank's research team.
-Answer the question using ONLY the numbered sources provided.
-Format:
-## From sources
-Claims taken from the sources, each followed by a citation like [1] or [2].
-## Model inference / caveats
-Anything you add that is NOT in the sources (reasoning, inference, gaps, outdated risk). Say so explicitly.
-If the sources do not answer the question, or the question is outside banking/finance/economics research, say that plainly instead of guessing. Never invent citations or figures."""
 
+def run_tool(plan: Plan, registry: Registry, store: EvidenceStore) -> tuple[list[str], str]:
+    """Run the planned tool; if it is unavailable, try the other registered tools.
 
-def format_context(sources: list[Source]) -> str:
-    if not sources:
-        return "(no sources were found)"
-    blocks = []
-    for i, s in enumerate(sources, 1):
-        head = f"[{i}] {s.title} ({s.url})"
-        if s.meta.get("published"):
-            head += f" published {s.meta['published']}"
-        blocks.append(f"{head}\n{s.text}")
-    return "\n\n".join(blocks)
+    Returns (notices, note). Notices are written by code and shown to the reader; the note
+    tells the model what happened so it can caveat its answer. Nothing is hidden: a tool that
+    failed, and any substitute that answered in its place, is always reported.
+    """
+    failures: dict[str, str] = {}
+    order = [plan.tool] + [n for n in registry.names() if n != plan.tool]
+    for name in order:
+        tool = registry.get(name)
+        options = plan.options if name == plan.tool else {}  # options belong to the planned tool
+        try:
+            sources = tool.run(plan.query, **options)
+        except ToolError as e:
+            failures[name] = str(e)
+            print(f"[tool error] {e}", file=sys.stderr)
+            continue
+        if not failures:
+            store.add(tool.id_prefix, sources)
+            return [], ""
+        if not sources:
+            continue  # the substitute found nothing either; try the next one
+        store.add(tool.id_prefix, sources)
+        down = "; ".join(f"{n}: {why}" for n, why in failures.items())
+        text = (
+            f"The planned tool ({plan.tool}) was unavailable ({down}). The sources below come "
+            f"from {name} instead, which may not cover what {plan.tool} would have."
+        )
+        return [text], text
+    down = "; ".join(f"{n}: {why}" for n, why in failures.items())
+    text = f"No sources could be retrieved ({down})."
+    return [text], text
 
 
 def answer(question: str, registry: Registry | None = None) -> str:
     registry = registry or default_registry()
+    store = EvidenceStore()
     plan = make_plan(question, registry)
     print(f"[plan] {plan.tool}: {plan.query!r} - {plan.reasoning}", file=sys.stderr)
-    sources: list[Source] = []
-    note = ""
-    if plan.tool != "none":
-        try:
-            sources = registry.get(plan.tool).run(plan.query, **plan.options)
-        except ToolError as e:
-            note = f"\n(The {plan.tool} tool failed: {e})"
-            print(f"[tool error] {e}", file=sys.stderr)
-    text = llm.chat(
-        [
-            {"role": "system", "content": SYSTEM},
-            {
-                "role": "user",
-                "content": f"Question: {question}\n\nSources:\n{format_context(sources)}{note}",
-            },
-        ]
-    )
-    refs = "\n".join(f"[{i}] {s.citation()}" for i, s in enumerate(sources, 1))
-    return f"{text}\n\n## Sources\n{refs or '(none)'}"
+    if plan.tool == "none":
+        # Out of scope: no tool can help, so refuse without spending an LLM call.
+        result = Synthesis(refusal_reason=plan.reasoning or "No available tool can answer this.")
+        return render(result, store)
+    notices, note = run_tool(plan, registry, store)
+    result = synthesize(question, store, f"\n({note})" if note else "")
+    result.notices = notices
+    return render(result, store)

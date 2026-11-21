@@ -590,3 +590,192 @@ Do you want me to push M2, open the PR and merge it once CI passes, then start M
 ## [2026-11-20 19:27:55] Prompt
 
 okay push and open a PR, also tell me how i can test this locally myself
+
+## [2026-11-20 19:28:49] Response
+
+I pushed `m2-tools-planner` and opened PR #2: https://github.com/aidaploco/research-agent-framework/pull/2. CI passed on GitHub: lint, tests on Python 3.11 and 3.12, gitleaks, and `ci-success`. I haven't merged it, since you only asked for the push and PR. I also committed the latest `prompt-log.md` before pushing, so the log in the PR is current.
+
+## Testing it yourself
+
+**Setup (once)**
+```sh
+cd /Users/aida/vscode/research-agent-framework
+git checkout m2-tools-planner      # if you're not already on it
+uv sync                            # installs dependencies from uv.lock
+```
+Your `.env` already has the Groq key. `.env.example` shows the format if you set it up elsewhere.
+
+**1. Offline checks.** These need no network or key and take about a second:
+```sh
+uv run pytest -q                                   # 28 tests
+uv run ruff format --check . && uv run ruff check .
+```
+
+**2. Live runs.** Each takes a few seconds, and arXiv questions can take longer if arXiv rate-limits you:
+```sh
+uv run python main.py "What is the Federal Reserve's discount window and how does it work?"
+uv run python main.py "What recent academic research exists on using machine learning for credit risk assessment?"
+uv run python main.py "What is the best restaurant in New York City?"
+```
+The `[plan]` line is printed to stderr and shows which tool the planner picked and why. To see only the answer:
+```sh
+uv run python main.py "What are the Basel III capital requirements for banks?" 2>/dev/null
+```
+
+**What to look for**
+- The discount-window question should plan `wikipedia` and cite the "Discount window" article.
+- The research question should plan `arxiv` and cite papers with `arXiv:` IDs and URLs you can open.
+- The restaurant question should plan `none`, call no tool, and say there are no sources.
+- Every answer should have a "From sources" section and a separate "Model inference / caveats" section.
+
+**Known behavior that isn't a bug**
+- Inline markers like `【1†L1-L4】` still appear. M3 fixes them.
+- A question that needs two tools, like Q6 (yield curves plus recent papers), is answered from one tool. The loop for that is M5.
+- If arXiv says "Rate exceeded", the tool retries for about 25 seconds. If it still fails, the answer says the tool was unavailable.
+- With no `GROQ_API_KEY`, you get a clear error, not a crash.
+
+**Poking at the planner without a full run**
+```sh
+uv run python -c "
+from dotenv import load_dotenv; load_dotenv()
+from research_agent.planner import make_plan
+from research_agent.tools.registry import default_registry
+print(make_plan('How do yield curve inversions relate to recessions?', default_registry()))"
+```
+
+Say the word and I'll merge PR #2 and start M3.
+
+---
+
+## [2026-11-20 19:30:27] Prompt
+
+merge pr 2 and start m3
+
+---
+
+## [2026-11-20 19:34:19] Prompt
+
+<task-notification>
+<task-id>bkxd8j009</task-id>
+<tool-use-id>toolu_01Tuf6NpqRHrdoXfhhUiFDd6</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-aida-vscode-research-agent-framework/4baf3cec-533d-4c4b-b5cc-c3a2b4bdc676/tasks/bkxd8j009.output</output-file>
+<status>completed</status>
+<summary>Background command "python3 - &lt;&lt;'EOF'
+p='tests/unit/test_agent.py'; s=open(p).read()
+s=s.replace('''    src = Source(
+        "fake",
+        "Paper",
+        "https://x/abs/1",
+        "abstract",
+''','''    src = Source(
+        tool="fake",
+        title="Paper",
+        url="https://x/abs/1",
+        text="abstract",
+''')
+open(p,'w').write(s)
+EOF
+uv run ruff check . --fix -q; uv run ruff format . -q; uv run ruff format --check . &amp;&amp; uv run ruff check . &amp;&amp; uv run pytest -q | tail -2; uv run py
+
+... [711 characters truncated] ...
+
+ so
+  callers can degrade gracefully instead of losing output
+- Planner uses it (non-strict: strict schemas reject free-form objects)
+- Probed Groq: strict json_schema with nested \$defs works for
+  gpt-oss-120b
+- Add pydantic dependency" &amp;&amp; git log -1 --format='%h %an | %s'" completed (exit code 0)</summary>
+</task-notification>
+
+## [2026-11-20 19:38:27] Response
+
+M3 is built and committed on `m3-structured-synthesis`, in three commits. It isn't pushed, and there's no PR yet. I merged PR #2 first, with a merge commit. Lint passes and all 59 unit tests pass. I ran four of the eight reference questions live: Q1, Q2, Q3 and Q7.
+
+**The three commits**
+1. `09e39d9`, a refactor. `Plan`, `Source` and tool options are now Pydantic models. Each tool declares an `id_prefix` and an options model. A new `llm.structured()` sends a JSON schema, validates the reply, runs an optional check, and retries once.
+2. `300b08c`, the feature:
+   - **Evidence IDs:** every retrieved source gets an ID such as `W1` or `A2`.
+   - **Structured claims:** the model returns claims as `{text, evidence_ids}`, plus inferences, caveats and a refusal reason.
+   - **Code does the citing:** it writes the `[W1][A2]` markers and strips any the model writes, so the `【1†L1-L4】` artifacts are gone.
+   - **ID validation:** an unknown or missing ID gets one repair retry, then the claim is demoted to an "Unverified" section, never dropped.
+   - **Number check:** figures of two or more digits, decimals and percentages must appear in the cited source.
+   - **Out of scope:** the planner's `none` refuses without calling the model.
+3. `a74ea78`, docs. The README explains the demotion policy and your reasoning for it. PLAN.md records the decisions.
+
+**Live results**
+- **Q1, discount window:** every claim cited `[W1]` and passed.
+- **Q2, Basel III:** it now answers with grounded figures (4.5% CET1, 2.5% buffer, 6% Tier 1, 3% leverage, 100% LCR). It refused before this milestone.
+- **Q3, credit-risk research:** five arXiv papers with IDs. Specific figures such as ROC-AUC 0.7584 matched the abstracts.
+- **Q7, restaurant:** it refused with no tool or model call.
+
+**Bugs I found and fixed along the way**
+- **Number words:** my grounding check wrongly demoted a correct claim. The source said "thirty days" and the model wrote `30`. The check now matches spelled-out numbers.
+- **Wikipedia ranking:** Wikipedia's search ranks an exact title like "Basel III" below pages that only mention it. The tool now looks up the exact title first. The planner prompt also asks for exact article names.
+- **Truncation:** the Basel III capital figures start past character 4,000, so Q2 refused. The top article now gets 8,000 characters and the others 3,000.
+- **Wikipedia 429s:** Wikipedia also rate-limited me with HTTP 429s, so the tool now retries with backoff.
+
+**Limits you should know about**
+- **Grounding check is shallow:** it confirms a number appears in the cited source. It doesn't confirm the number is attached to the right fact. Single-digit numbers aren't checked, and an occasional correct claim can still be demoted. The README says this.
+- **arXiv:** it timed out on one run, and the tool reported it as an error without crashing.
+- **Not run live:** I haven't run Q4, Q5, Q6 or Q8. Q4 and Q6 need the M5 loop.
+- **CI:** nothing is pushed, so CI hasn't run.
+
+Do you want me to push the branch and open a PR?
+
+---
+
+## [2026-11-20 19:43:05] Prompt
+
+are the tests calling live APIs? you should use fake LLM and search providers. 
+
+for the grounding check, normalise the formats before comparing. can we also check if the number appears near a keyword from the claim to fix the confirmation of the number and right fact?
+
+for arxiv, does the agent say that arxiv is down and that it answered from wikipedia? and does it implement a retry with a short backoff and timeout?
+
+## [2026-11-20 19:52:26] Response
+
+All three changes are committed on `m3-structured-synthesis` as three commits, with 91 tests passing. I haven't pushed anything or opened a PR. The agent changes were checked live against Groq and Wikipedia. I simulated arXiv being down.
+
+**Are the tests calling live APIs?**
+No. I added a check that fails any test that opens a network socket, and all 59 tests at the time passed with it. They did stub at the function level, though, with repeated `monkeypatch` lambdas. The tests now use shared fakes in `tests/fakes.py`: a scripted fake LLM, fake tools, and recorded HTTP responses. The suite is 91 tests and runs in about 0.05 seconds because nothing really sleeps.
+
+**Grounding check**
+- **Normalized formats:** numbers are compared by value. This covers:
+  - `1,200` and `1200`
+  - `$46 billion` and `46,000,000,000`
+  - `4.5%` and `4.5 percent`
+  - `100 bps` and `100 basis points`
+  - "thirty" and `30`
+  - unicode dashes, no-break-space thousands separators, and ISO dates
+  - Units must agree, so 100 basis points does not ground "100%".
+- **Keyword proximity:** a matching number only counts if a keyword from the claim's own wording around that number appears near it in the source, within the same sentence. A source's "3 percent" beside "leverage ratio" no longer grounds a claim about a dividend cap.
+- **Three false demotions** of correct claims showed up in live runs and are now regression tests:
+  - **List layout:** a number alone on its own line, as in "…at all times of: 4.5%".
+  - **Stem collision:** "dividend" and "divided" both reduced to `divid`.
+  - **Years:** a plain year only needs to appear in the source.
+- **Prompt change:** I told the model to write one atomic fact per claim.
+- **Live result:** the Discount window and Basel III answers keep all claims sourced (9 and 11).
+- **Limits:**
+  - It's keyword proximity, not understanding.
+  - Two figures in one unpunctuated clause share context, so swapped figures there can pass.
+  - There's no unit conversion and no month-name dates.
+  - All of this is in the README.
+
+**arXiv failures**
+- **Before:** the agent did not say arXiv was down and had no fallback to Wikipedia. It only added a note to the model's prompt. Retries were not short either: 4 attempts, a 30-second timeout each, and a worst case of about 134 seconds.
+- **Retries now:** arXiv and Wikipedia make 3 attempts, with a 10-second timeout per request and a short backoff (arXiv 2s then 4s, Wikipedia 1s then 2s). The arXiv worst case is about 40 seconds. Failures name their reason, such as `rate limited`, `ReadTimeout` or `HTTP 503`.
+- **Fallback:** if the planned tool is still unavailable, the agent tries the other registered tools with the same query.
+- **Disclosure:** the code, not the model, prints a Notices section naming the failed tool and why. If another tool answered, it says the sources come from that tool.
+- **Live check:** I pointed arXiv at a dead port. It made 3 attempts, printed the notice, and fell back to Wikipedia. The model then refused honestly, because Wikipedia's article didn't cover the question. The run took 10.7 seconds.
+- **Tradeoff:** one earlier arXiv query needed about 25 seconds of retries to clear a rate limit. The shorter backoff means more runs fall back instead. The README says so.
+- **Not built:** circuit breakers and measuring quality under partial failure. That's the Tier 3 reliability item. A tool that works but finds nothing doesn't trigger a fallback; refining the search is M5's job.
+
+**Not run live:** Q4, Q5, Q6 and Q8.
+
+Do you want me to push the branch and open a PR for M3?
+
+---
+
+## [2026-11-20 19:54:34] Prompt
+
+yeah push open and merge. also tell me what's next based on the plan

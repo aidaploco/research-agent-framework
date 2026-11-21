@@ -26,7 +26,11 @@ class Registry:
         """Text the planner reads to choose a tool."""
         lines = []
         for tool in self._tools.values():
-            opts = "".join(f"\n    option {k}: {v}" for k, v in tool.options.items())
+            fields = tool.options_model.model_fields
+            opts = "".join(
+                f"\n    option {k} ({f.annotation.__name__}): {f.description}"
+                for k, f in fields.items()
+            )
             lines.append(f"- {tool.name}: {tool.description}{opts}")
         return "\n".join(lines)
 
