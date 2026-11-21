@@ -10,6 +10,9 @@ venv/
 .env
 .claude/settings.local.json
 
+# Run traces (sample traces for the reference questions are committed under outputs/)
+.traces/
+
 # Hook debug output
 .claude/hooks/debug.log
 

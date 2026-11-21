@@ -1,8 +1,10 @@
 """Planner: asks the LLM which tool to call (one per step) and with what query."""
 
+import time
+
 from pydantic import BaseModel, ValidationError
 
-from . import llm
+from . import llm, tracing
 from .tools.registry import Registry
 
 PLANNER_SYSTEM = """You plan research for a bank's research team. Choose ONE tool to call next.
@@ -49,6 +51,8 @@ def make_plan(question: str, registry: Registry, attempts: int = 2) -> Plan:
         {"role": "system", "content": PLANNER_SYSTEM.format(tools=registry.describe())},
         {"role": "user", "content": question},
     ]
+    started = time.monotonic()
+    fell_back = False
     try:
         # Not strict: the options object is free-form, which strict schemas do not allow.
         plan, problem = llm.structured(
@@ -59,14 +63,27 @@ def make_plan(question: str, registry: Registry, attempts: int = 2) -> Plan:
             attempts=attempts,
             max_tokens=300,
         )
-        if problem is None:
-            return plan
     except llm.StructuredOutputError as e:
-        problem = str(e)
-    # Fall back to a safe default rather than failing the whole run.
-    first = registry.names()[0]
-    return Plan(
-        reasoning=f"planner output invalid ({problem}); defaulting to {first}",
-        tool=first,
-        query=question,
+        plan, problem = None, str(e)
+    if plan is None or problem is not None:
+        # Fall back to a safe default rather than failing the whole run.
+        first = registry.names()[0]
+        plan = Plan(
+            reasoning=f"planner output invalid ({problem}); defaulting to {first}",
+            tool=first,
+            query=question,
+        )
+        fell_back = True
+    tracing.add_step(
+        tracing.PlanStep(
+            duration_ms=int((time.monotonic() - started) * 1000),
+            tools_offered=registry.describe(),
+            reasoning=plan.reasoning,
+            tool=plan.tool,
+            query=plan.query,
+            options=plan.options,
+            fell_back_to_default=fell_back,
+            llm_attempts=tracing.take_attempts(),
+        )
     )
+    return plan

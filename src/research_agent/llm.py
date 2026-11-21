@@ -9,6 +9,8 @@ from typing import TypeVar
 import requests
 from pydantic import BaseModel, ValidationError
 
+from . import tracing
+
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_MODEL = "openai/gpt-oss-120b"
 
@@ -24,6 +26,10 @@ class StructuredOutputError(LLMError):
 T = TypeVar("T", bound=BaseModel)
 
 
+def model_name() -> str:
+    return os.environ.get("LLM_MODEL", DEFAULT_MODEL)
+
+
 def chat(messages, model=None, max_tokens=1500, retries=3, response_format=None):
     """Send a chat request and return the assistant text. Retries on 429/5xx."""
     key = os.environ.get("GROQ_API_KEY")
@@ -32,7 +38,7 @@ def chat(messages, model=None, max_tokens=1500, retries=3, response_format=None)
             "GROQ_API_KEY is not set. Copy .env.example to .env and add a free Groq key."
         )
     payload = {
-        "model": model or os.environ.get("LLM_MODEL", DEFAULT_MODEL),
+        "model": model or model_name(),
         "messages": messages,
         "max_completion_tokens": max_tokens,
         "reasoning_effort": "low",
@@ -85,7 +91,10 @@ def structured(
     messages = list(messages)
     problem: str | None = None
     for attempt in range(attempts):
+        sent = [dict(m) for m in messages]
+        started = time.monotonic()
         reply = chat(messages, max_tokens=max_tokens, response_format=response_format)
+        elapsed = int((time.monotonic() - started) * 1000)
         try:
             obj = model_cls.model_validate_json(reply)
         except (ValidationError, json.JSONDecodeError) as e:
@@ -93,8 +102,18 @@ def structured(
             obj = None
         else:
             problem = check(obj) if check else None
-            if problem is None:
-                return obj, None
+        tracing.record_attempt(
+            tracing.LLMAttempt(
+                purpose=model_cls.__name__.lower(),
+                model=model_name(),
+                messages=sent,
+                reply=reply,
+                problem=problem,
+                duration_ms=elapsed,
+            )
+        )
+        if obj is not None and problem is None:
+            return obj, None
         if attempt < attempts - 1:
             messages += [
                 {"role": "assistant", "content": reply},

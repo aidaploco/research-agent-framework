@@ -9,10 +9,11 @@ anything the model asserts on its own.
 """
 
 import re
+import time
 
 from pydantic import BaseModel, ConfigDict
 
-from . import llm
+from . import llm, tracing
 from .evidence import EvidenceStore
 from .grounding import figure_problem
 
@@ -158,16 +159,32 @@ def synthesize(question: str, store: EvidenceStore, note: str = "") -> Synthesis
             "content": f"Question: {question}\n\nSources:\n{format_context(store)}{note}",
         },
     ]
+    started = time.monotonic()
     try:
         answer, _ = llm.structured(
             messages, Answer, check=lambda a: check_answer(a, store), attempts=2, max_tokens=2000
         )
+        result = classify(answer, store)
     except llm.StructuredOutputError as e:
-        return Synthesis(
+        result = Synthesis(
             refusal_reason="The model did not return a valid structured answer.",
             caveats=[f"Technical detail: {e}"],
         )
-    return classify(answer, store)
+    attempts = tracing.take_attempts()
+    tracing.add_step(
+        tracing.SynthesisStep(
+            duration_ms=int((time.monotonic() - started) * 1000),
+            evidence_ids=[eid for eid, _ in store.items()],
+            llm_attempts=attempts,
+            repaired=len(attempts) > 1,
+            sourced=[c.model_dump() for c in result.sourced],
+            unverified=[u.model_dump() for u in result.unverified],
+            inferences=result.inferences,
+            caveats=result.caveats,
+            refusal_reason=result.refusal_reason,
+        )
+    )
+    return result
 
 
 def render(result: Synthesis, store: EvidenceStore) -> str:

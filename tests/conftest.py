@@ -24,6 +24,13 @@ def no_network(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", blocked)
 
 
+@pytest.fixture(autouse=True)
+def trace_dir(monkeypatch, tmp_path):
+    """Send traces to a temp directory so tests never write into the repository."""
+    monkeypatch.setenv("TRACE_DIR", str(tmp_path / "traces"))
+    return tmp_path / "traces"
+
+
 @pytest.fixture
 def fake_llm(monkeypatch):
     """A scripted LLM installed in place of the Groq client."""
