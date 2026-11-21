@@ -319,3 +319,43 @@ Runtime traces would go to a gitignored `.traces/`. The committed ones for the 8
 ## [2026-11-20 18:51:52] Prompt
 
 for now only do the adopt as is part and set requires-python to >= 3.11. do this in the same branch as you did the M1 work. we'll leave the other adapt parts for later, as we progress with the milestones.
+
+## [2026-11-20 18:52:56] Response
+
+The adopt-as-is items are in, with `requires-python >=3.11`, committed on `m1-thin-slice` as `13c11cd`. I haven't pushed the branch or opened a PR. The commit is authored by you only, signed, with no Claude trailer.
+
+**What changed**
+- **uv:** `pyproject.toml` (hatchling, `requires-python >=3.11`), a committed `uv.lock`, and a dev group with pytest and ruff. `requirements.txt` and the pip-made `.venv` are gone. `.python-version` is 3.12, which uv fetches if it's missing.
+- **Layout:**
+  - The package moved to `src/research_agent/`.
+  - `tests/` has `unit/`, `fixtures/`, `conftest.py` and a `README.md`. It holds 4 mocked unit tests that need no network or key.
+  - A minimal `README.md` stub is there for now.
+  - The root `agent.py` is unchanged, so `uv run python agent.py "..."` still works.
+- **CI** (`.github/workflows/ci.yml`):
+  - **Jobs:** ruff format and lint, tests on Python 3.11 and 3.12, and a gitleaks full-history scan.
+  - **Gate:** a fail-closed `ci-success` job aggregates them.
+  - **Fork PRs:** they're skipped, so a fork PR shows a red check instead of a false green.
+  - **Pinned versions:** actions and gitleaks are pinned. I reused chassis's pins and haven't checked them.
+- **Dependabot:** weekly and grouped, for uv and github-actions.
+
+**Choices I made**
+- **E501:** I ignore ruff's E501 line-length rule, because it only fired on long prompt strings and I didn't want to rewrap prompts. `ruff format` still enforces code line length.
+- **Coverage:** CI has no coverage gate.
+- **Not done:** I left the adapt items for later, as you said.
+
+**Checked locally**
+Ruff format and lint pass, the 4 tests pass, `uv lock --check` is clean, and both workflow YAML files parse. `uv run python agent.py` still runs end to end. I haven't run CI on GitHub, since nothing is pushed, or gitleaks locally.
+
+**Retrieval is still weak**
+After the restructure I ran "What is the Federal Reserve's discount window?". The LLM query rewrite searched Wikipedia for something broader, retrieved only "Federal Reserve", and the agent declined to answer. The earlier longer phrasing found the right article. The prompt declines rather than guessing, which is what we want, but the query step is brittle. The M2 planner should address this, and I've noted it for the plan.
+
+**For when you want branch protection updated**
+Once CI has run on GitHub, `ci-success` will exist as a check. Then I can require it on `main`. I haven't changed branch protection.
+
+I'm waiting for your go-ahead to push and open a PR, or to start M2.
+
+---
+
+## [2026-11-20 18:55:41] Prompt
+
+why is there an agent.py file inside src and outside src? it's confusing. rename the outside one to main.py if its only function is to provide entry to the system

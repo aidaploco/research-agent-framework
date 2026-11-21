@@ -128,7 +128,7 @@ Each milestone ends runnable and committed. Closed checklist IDs are listed.
   - **Do not push or create the public repo until Aida says so in that turn.**
   - Closes: part of G1, R5.
 - **M1 — Thinnest end-to-end slice.**
-  - One tool (Wikipedia search and summary), one LLM call, and `python agent.py "question"` printing an answer with URL citations.
+  - One tool (Wikipedia search and summary), one LLM call, and `python main.py "question"` printing an answer with URL citations. (Entry point is `main.py`; the spec's `agent.py` is only an example, "e.g.". The orchestration code lives in `src/research_agent/agent.py`.)
   - Choose and verify the LLM backend here, and confirm free-tier or local facts at this point.
   - Closes: A1, A4 (partially), A10, R2, R3.
 - **M2 — Second tool and a tool interface.**

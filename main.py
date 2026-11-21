@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI entry point: python agent.py "your question" """
+"""CLI entry point: python main.py "your question" """
 
 import sys
 
@@ -10,7 +10,7 @@ from research_agent.agent import answer
 
 def main():
     if len(sys.argv) < 2:
-        sys.exit('Usage: python agent.py "your research question"')
+        sys.exit('Usage: python main.py "your research question"')
     load_dotenv()
     print(answer(" ".join(sys.argv[1:])))
 
