@@ -1,22 +1,21 @@
+import pytest
+
 from research_agent.tools import wikipedia
 from research_agent.tools.base import ToolError
 from research_agent.tools.wikipedia import WikipediaTool
+from tests.fakes import FakeHTTPResponse
 
 MISSING = {"query": {"pages": {"-1": {"title": "Zzz", "missing": ""}}}}
 
 
-class FakeResponse:
-    status_code = 200
-    headers: dict = {}
+FakeResponse = FakeHTTPResponse
 
-    def __init__(self, data):
-        self._data = data
 
-    def raise_for_status(self):
-        pass
-
-    def json(self):
-        return self._data
+@pytest.fixture(autouse=True)
+def fast(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(wikipedia.time, "sleep", sleeps.append)
+    return sleeps
 
 
 def test_search_returns_ranked_sources_with_urls(monkeypatch):
@@ -130,37 +129,36 @@ def test_disambiguation_page_is_skipped(monkeypatch):
     assert WikipediaTool().run("Mercury") == []
 
 
-def test_429_is_retried_with_backoff(monkeypatch):
-    monkeypatch.setattr(wikipedia.time, "sleep", lambda s: None)
-    statuses = iter([429, 200])
-
-    class R:
-        def __init__(self, code):
-            self.status_code, self.headers = code, {}
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return MISSING
-
-    monkeypatch.setattr(wikipedia.requests, "get", lambda *a, **k: R(next(statuses)))
+def test_429_is_retried_with_short_backoff(monkeypatch, fast):
+    replies = iter([FakeHTTPResponse(status=429), FakeHTTPResponse(MISSING)])
+    monkeypatch.setattr(wikipedia.requests, "get", lambda *a, **k: next(replies))
     assert WikipediaTool()._get({"action": "query"}) == MISSING
+    assert fast == [1.0]
 
 
-def test_429_forever_raises_tool_error(monkeypatch):
-    monkeypatch.setattr(wikipedia.time, "sleep", lambda s: None)
+def test_gives_up_after_three_attempts_and_names_the_reason(monkeypatch, fast):
+    timeouts = []
 
-    class R:
-        status_code, headers = 429, {}
+    def limited(*a, **k):
+        timeouts.append(k["timeout"])
+        return FakeHTTPResponse(status=429)
 
-        def raise_for_status(self):
-            raise wikipedia.requests.HTTPError("429")
-
-    monkeypatch.setattr(wikipedia.requests, "get", lambda *a, **k: R())
-    try:
+    monkeypatch.setattr(wikipedia.requests, "get", limited)
+    with pytest.raises(ToolError, match=r"unavailable after 3 attempts \(rate limited\)"):
         WikipediaTool().run("x")
-    except ToolError:
-        pass
-    else:
-        raise AssertionError("expected ToolError")
+    assert timeouts == [10.0] * 3 and fast == [1.0, 2.0]
+
+
+def test_timeouts_and_connection_errors_are_retried(monkeypatch, fast):
+    errors = iter([wikipedia.requests.ReadTimeout("slow"), wikipedia.requests.ConnectionError("x")])
+    replies = {"n": 0}
+
+    def flaky(*a, **k):
+        replies["n"] += 1
+        try:
+            raise next(errors)
+        except StopIteration:
+            return FakeHTTPResponse(MISSING)
+
+    monkeypatch.setattr(wikipedia.requests, "get", flaky)
+    assert WikipediaTool()._get({}) == MISSING and replies["n"] == 3

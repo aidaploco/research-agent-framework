@@ -58,6 +58,7 @@ class Unverified(BaseModel):
 class Synthesis(BaseModel):
     """A validated answer, ready to render."""
 
+    notices: list[str] = []  # written by code, not the model: tool failures, substitutions
     sourced: list[Claim] = []
     unverified: list[Unverified] = []
     inferences: list[str] = []
@@ -172,6 +173,11 @@ def synthesize(question: str, store: EvidenceStore, note: str = "") -> Synthesis
 def render(result: Synthesis, store: EvidenceStore) -> str:
     """Plain-text answer. Citation markers are written here, by code."""
     out: list[str] = []
+    if result.notices:
+        out.append("## Notices")
+        out += [f"- {n}" for n in result.notices]
+        if result.sourced:
+            out.append("")
     if result.sourced:
         out.append("## From sources")
         for c in result.sourced:

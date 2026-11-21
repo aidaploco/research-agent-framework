@@ -125,6 +125,7 @@ Pick one. Details are in the Ambiguities section.
 - **Planner:** one tool call per step for now. Documented as a tradeoff in the README.
 - **Unverified claims (M3):** a claim whose evidence ID is unknown gets one repair retry; if still unknown it is moved out of the sourced section and labelled unverified, never dropped. Rationale (also in the README): dropping silently hides information, and demoting keeps retrieved information separate from the model's own inference.
 - **Structured claims (M3):** the model returns `{text, evidence_ids}` claims (IDs like W1, A2, assigned per tool prefix); code writes the citation markers and validates the IDs. Pydantic is used for structured outputs where applicable.
+- **Tool failures (M3 follow-up):** short timeout and backoff (3 attempts, 10s timeout), fallback to another registered tool, and a code-written Notices section that names the failed tool, the reason and any substitute. Unit tests use fakes only, with the network blocked.
 - **README:** kept up to date with every milestone.
 - **Layout:** uv, `src/` layout, CI with ruff, tests, gitleaks and a `ci-success` gate (done). Other items from the agent-chassis comparison (offline vs live evals, deterministic graders) are adopted as the milestones reach them.
 
