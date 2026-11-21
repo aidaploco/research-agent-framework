@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Secrets / local config
+.env
+.claude/settings.local.json
+
+# Hook debug output
+.claude/hooks/debug.log
+
+# OS
+.DS_Store
