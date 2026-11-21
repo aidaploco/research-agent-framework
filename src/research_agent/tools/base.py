@@ -27,7 +27,8 @@ class Source(BaseModel):
     meta: dict = Field(default_factory=dict)  # e.g. authors, published date
 
     def citation(self) -> str:
-        label = f"{self.title} ({self.native_id})" if self.native_id else self.title
+        has_id = self.native_id and f"({self.native_id})" not in self.title
+        label = f"{self.title} ({self.native_id})" if has_id else self.title
         return f"{label} - {self.url}"
 
 
@@ -42,6 +43,9 @@ class Tool(ABC):
     id_prefix: str  # evidence IDs are this prefix plus a number: W1, A2, ...
     description: str  # shown to the planner: what this tool is good for
     options_model: type[BaseModel] = NoOptions  # validates and documents run() options
+    # True for tools that return current figures. If one is unavailable, the answer must say no
+    # current figure is available, and must not fill the gap from the model's memory.
+    live_data: bool = False
 
     @abstractmethod
     def run(self, query: str, **options) -> list[Source]:

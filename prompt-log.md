@@ -950,3 +950,163 @@ delete the m4 branch. push and open the PR and tell me how i can test what we've
 ## [2026-11-20 20:25:09] Prompt
 
 the ci pipeline failed, fix it
+
+---
+
+## [2026-11-20 20:26:40] Prompt
+
+don't wait for the ci pipeline. tell me how to test locally what we've built so far. then tell me what you want to build for m6
+
+---
+
+## [2026-11-20 20:26:40] Prompt
+
+<task-notification>
+<task-id>bsbis297h</task-id>
+<tool-use-id>toolu_01XeX6McffYWuomuM741Z8g9</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-aida-vscode-research-agent-framework/4baf3cec-533d-4c4b-b5cc-c3a2b4bdc676/tasks/bsbis297h.output</output-file>
+<status>completed</status>
+<summary>Background command "sleep 1; until out=$(gh pr checks 5 2&gt;&amp;1) &amp;&amp; ! echo "$out" | grep -q -E 'pending|queued|in_progress|no checks|GraphQL'; do sleep 5; done; echo "$out"" completed (exit code 0)</summary>
+</task-notification>
+
+## [2026-11-20 20:27:16] Response
+
+CI on the pushed fix was already green when your message arrived (`163d8cc`: lint, tests on 3.11 and 3.12, secrets and `ci-success` all passed), so I'm not waiting on it. PR #5 is open but not merged.
+
+## Testing what we've built locally
+
+You're on `m5-multistep-loop`. If not: `git checkout m5-multistep-loop`.
+
+**1. Offline checks (no key, no network, about 2 seconds)**
+```sh
+uv sync
+uv run pytest -q                              # 179 tests
+uv run --python 3.11 pytest -q                # the other Python CI uses
+uv run ruff format --check . && uv run ruff check .
+```
+Expected: all pass. Any test that touches the network fails by design.
+
+**2. Live runs (use your Groq key in `.env`)**
+```sh
+uv run python main.py --single-pass "What is the Federal Reserve's discount window?"
+uv run python main.py "Explain the relationship between yield curve inversions and recessions. Are there recent academic papers on this topic?"
+uv run python main.py --single-pass "Explain the relationship between yield curve inversions and recessions. Are there recent academic papers on this topic?"
+uv run python main.py "What is the best restaurant in New York City?"
+```
+- **What to look for:**
+  - The first run finishes after one search.
+  - The yield-curve question in default mode searches Wikipedia, then arXiv. The `[plan 1]`, `[plan 2]` lines on stderr show each step.
+  - Run it with `--single-pass` as well, to compare the two answers.
+  - The restaurant question refuses with no search.
+- **Pacing:** multi-step runs may print `[pacing] waiting …s` and take about a minute. That's the free tier's token limit working as intended. Space your runs out a little.
+
+**3. Read what the agent did**
+```sh
+uv run python -m research_agent.trace_cli show latest
+uv run python -m research_agent.trace_cli list
+uv run python -m research_agent.trace_cli sql "SELECT mode, stop_reason, n_tool_calls, n_sourced, prompt_tokens, wait_ms, duration_ms FROM runs ORDER BY run_id DESC"
+```
+`show latest` prints:
+- what the planner saw
+- why it chose each step
+- what each tool returned
+- every claim, sourced or unverified
+- why the loop stopped
+
+**4. Failure behavior (costs nothing)**
+```sh
+GROQ_API_KEY= uv run python main.py "q"                    # one-line error, no traceback
+uv run python main.py --single-pass --max-steps 3 "q"      # rejected: flags conflict (the CI bug)
+```
+To simulate arXiv being down (real Groq and Wikipedia, dead arXiv):
+```sh
+uv run python - <<'EOF'
+from dotenv import load_dotenv; load_dotenv()
+from research_agent.tools import arxiv; arxiv.API = "http://127.0.0.1:9/x"
+from research_agent import agent
+print(agent.answer("What recent academic research exists on using machine learning for credit risk assessment?", max_steps=1))
+EOF
+```
+Expected: three attempts, then a Notices section naming arXiv and the error, with Wikipedia as the substitute. I verified this live before M5. After M5 I covered it with tests, but I haven't re-run it live.
+
+## What I want to build for M6: the FRED tool
+
+I'd build it to your rules.
+
+- **FredTool:**
+  - It retrieves time-series values from FRED's API (`UNRATE`, `FEDFUNDS`, `T10Y2Y`, GDP, CPI, and so on).
+  - The planner chooses the series from a short catalog of common IDs in the tool's description. For unknown topics the tool falls back to FRED's series search.
+  - Output is a source with the series title, units, frequency, last-updated date, and the last 13 months of observations as plain lines (`2026-10-01: 4.3`). The 12-month change is computed in code and included as a line, so the model never does the arithmetic and the grounding check can verify it.
+  - FRED's missing-value marker (`.`) is skipped.
+- **No key:**
+  - The tool is still offered to the planner. It fails fast, with no network call, and says: *"FRED_API_KEY is not set: live economic data cannot be retrieved."*
+  - The loop's existing failure handling then lets the planner use Wikipedia.
+  - A **code-written** notice says live data couldn't be retrieved and that any background below is general context that may be out of date, not a current figure. It's not left to the model to decide whether to say so.
+- **Never state a current rate from memory.**
+  - Claims are already grounded in sources. The gap I'd close is that the model's free-text *inferences* and *caveats* aren't checked, so it could still write "about 4%".
+  - I'd run the same grounding check over them. Any inference with a figure that isn't in a retrieved source gets moved to **Unverified**, with the reason. That makes your rule enforced in code.
+- **Q5 both ways:** with a key it returns the live latest value plus the 12-month change. Without one it gives the can't-retrieve notice plus labelled Wikipedia background on how the rate is measured. Both outputs are saved for M7.
+- **Tests:** a recorded FRED response as a fixture, the missing-value marker, the no-key path and its notice, the inference-figure guard, and planner routing to FRED for economic-data questions. All on fakes, with no network.
+- **README and PLAN:** updated for FRED, and the `FRED_API_KEY` entry stops being "reserved".
+
+**What I need from you:** a free FRED API key in `.env` as `FRED_API_KEY`, from https://fred.stlouisfed.org/docs/api/api_key.html, to verify the keyed path live. I'm writing the endpoint details from memory (`series/observations`, `series`, `series/search`), so I'll confirm them against the live API before relying on them.
+
+**Order:** merge PR #5, then branch `m6-fred` from `main`. Say go and I'll merge #5 and start M6.
+
+---
+
+## [2026-11-20 20:28:14] Prompt
+
+merge pr 5 and start m6, the fred api key is in .env
+
+## [2026-11-20 20:36:07] Response
+
+M6 is built and committed on `m6-fred` in two commits (`69da47b`, `dcae3c9`). It isn't pushed, and there's no PR. PR #5 for M5 is merged as `a549f8f`. Lint passes and all 217 tests pass on Python 3.11 and 3.12. I ran the FRED path live with your key.
+
+**Correction to my earlier message.** The arXiv-down snippet I gave you last turn crashed. `load_dotenv()` fails when run from stdin or `-c`. This corrected version works, and I just ran it end to end. It shows three attempts, the Notices section, and the Wikipedia fallback:
+```sh
+uv run python - <<'EOF'
+from dotenv import find_dotenv, load_dotenv
+load_dotenv(find_dotenv(usecwd=True))
+from research_agent.tools import arxiv
+arxiv.API = "http://127.0.0.1:9/x"
+from research_agent import agent
+print(agent.answer("What recent academic research exists on using machine learning for credit risk assessment?", max_steps=1))
+EOF
+```
+
+**What M6 adds**
+- **FRED tool:**
+  - I checked the endpoints and all 13 catalog series IDs against the live API first.
+  - It returns the latest value, the value about a year earlier, and the change. The change is computed in code, so the grounding check can verify it.
+  - The planner picks from a short catalog of common series, and the tool falls back to keyword search.
+  - Daily series are summarized.
+- **No key:** the tool fails instantly, with no network call, and says live data can't be retrieved. The planner then turns to Wikipedia. Code, not the model, adds a notice: no current figure is available, none is stated, and anything below from other sources may be out of date.
+- **No figure from memory:** the model's own inferences, caveats and refusal explanations are now held to the same figure check against all retrieved sources. A remembered rate lands under Unverified. In the no-key run the model wrote "the current (2026) rate", and it was caught.
+- **Your key is protected.** FRED puts the key in the URL, and error text from `requests` includes the URL. No error, notice or trace is built from exception text, and tests check that the key never leaks.
+
+**Q5 live, both ways** (saved in `outputs/`)
+- **With the key:** 4.1% in October 2026, down 0.3 points from 4.4% a year earlier, cited to the FRED series page.
+- **Without the key:** the notice appears, and a "Gaps" section says the current rate isn't in the sources. No current rate is stated. The model still listed dated historical rates (2017, 2019, 2020) from Wikipedia, even after I tightened the instruction twice. They're sourced and dated, but they aren't the "how the rate is measured" background you asked for. A prompt can only steer the model here. The README says so.
+
+**Bugs the live runs exposed.** The new free-text check wrongly demoted correct statements, and each case is now a regression test:
+- a subject stated in the previous clause
+- month names that don't match the source's ISO dates
+- a year that only appears inside an ISO date
+- the "19" in "COVID-19" read as a quantity
+
+**Known quirk:** FRED has no October 2025 unemployment figure, so "a year earlier" resolves to September 2025. The dates are always stated.
+
+Do you want me to push `m6-fred` and open the PR, and should I merge it too? M7 is next: running all 8 reference questions with committed outputs and traces.
+
+---
+
+## [2026-11-20 20:38:32] Prompt
+
+push, open the pr and merge it, then start m7
+
+---
+
+## [2026-11-20 20:41:27] Prompt
+
+fix the pipeline failure, push, merge, then start m7

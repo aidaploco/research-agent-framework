@@ -162,7 +162,7 @@ Each milestone ends runnable and committed. Closed checklist IDs are listed.
   - A ReAct-style loop with a step cap, a retrieved-items memory, and dedupe of repeated calls.
   - A single-pass flag for comparison.
   - Closes: M1–M3, A6 (design decision).
-- **M6 — FRED tool.**
+- **M6 — FRED tool.** *(Implemented on branch `m6-fred`: FRED tool, live-data notices, a figure guard on the model's own words; Q5 both ways in `outputs/`.)*
   - Optional key, graceful disable without it, and Q5 handled both ways.
   - Closes: T1 (third tool), Q5.
 - **M7 — Run all 8 reference questions.**

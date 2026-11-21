@@ -50,7 +50,7 @@ def test_search_problems_are_reported(plan, expected):
 def test_a_tool_that_failed_this_run_cannot_be_chosen_again():
     state = PlanState(failed_tools={"arxiv"})
     problem = check_plan(search(tool="arxiv", query="x"), REG, state)
-    assert "already failed" in problem and "['wikipedia']" in problem
+    assert "already failed" in problem and "['wikipedia', 'fred']" in problem
     assert check_plan(search(tool="wikipedia", query="x"), REG, state) is None
 
 
@@ -129,7 +129,7 @@ def test_invalid_output_with_evidence_defaults_to_finishing(fake_llm):
 
 def test_invalid_output_with_every_tool_failed_finishes(fake_llm):
     fake_llm.always("garbage")
-    plan = make_plan("q", REG, PlanState(failed_tools={"wikipedia", "arxiv"}))
+    plan = make_plan("q", REG, PlanState(failed_tools={"wikipedia", "arxiv", "fred"}))
     assert plan.action == "finish" and "no tool is available" in plan.reasoning
 
 
@@ -139,3 +139,12 @@ def test_the_prompt_tells_the_model_to_change_a_failed_query_and_to_finish_when_
     system = fake_llm.calls[0]["messages"][0]["content"]
     assert "Repeating a query returns the same thing" in system
     assert "Choose finish as soon as the evidence covers" in system
+
+
+def test_the_planner_is_told_what_fred_is_for_and_which_series_ids_exist(fake_llm):
+    fake_llm.queue(plan_json("fred", "UNRATE"))
+    make_plan("What is the current US unemployment rate?", REG)
+    system = fake_llm.calls[0]["messages"][0]["content"]
+    assert "- fred:" in system and "CURRENT" in system
+    assert "UNRATE unemployment rate" in system and "T10Y2Y" in system
+    assert "option years (int)" in system

@@ -139,3 +139,45 @@ def test_stem_strips_light_suffixes_only():
 
 def test_keywords_drop_stopwords_short_words_and_numbers():
     assert keywords("The ratio of 4.5 is about the minimum") == {"ratio"}
+
+
+FRED_SRC = (
+    "Series UNRATE: Unemployment Rate. Frequency: Monthly. Units: Percent.\n"
+    "Latest observation, Unemployment Rate on 2026-10-01: 4.1 (Percent).\n"
+    "About 1 year earlier, Unemployment Rate on 2025-09-01: 4.4 (Percent).\n"
+    "Change over the past 1 year in Unemployment Rate: -0.3 percentage points."
+)
+
+
+def test_a_year_is_found_inside_the_iso_dates_of_the_source():
+    assert figure_problem("Data are only available up to October 2026.", FRED_SRC) is None
+    assert "does not appear" in figure_problem("Data are available up to 2027.", FRED_SRC)
+
+
+def test_month_names_are_not_context_words():
+    assert "september" not in keywords("From September to October") and "octob" not in keywords(
+        "October"
+    )
+
+
+def test_a_clause_with_little_context_uses_the_whole_sentence_for_its_subject():
+    claim = "The unemployment rate has declined slightly over the past year, moving from 4.4% in September 2025 to 4.1% in October 2026."
+    assert figure_problem(claim, FRED_SRC) is None
+
+
+def test_the_sentence_fallback_still_catches_a_figure_about_something_else():
+    claim = "Dividend payouts have shrunk, moving from 4.4% in September 2025."
+    assert "not near" in figure_problem(claim, FRED_SRC)
+
+
+def test_identifiers_with_a_number_after_letters_and_a_hyphen_are_not_figures():
+    # COVID-19, U-3, Basel-4: the number is part of a name, not a quantity
+    assert values("the COVID-19 pandemic and the U-3 measure") == []
+    assert values("a 19% rise") == [("19", "%")]
+    assert values("10-Year Treasury") == [("10", None)]
+    assert (
+        figure_problem(
+            "Unemployment rose during the COVID-19 pandemic.", "Unemployment rose in 2020."
+        )
+        is None
+    )

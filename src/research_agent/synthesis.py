@@ -23,7 +23,8 @@ Return JSON with:
 - claims: each claim is one statement taken from the sources (text) and the evidence IDs that
   directly support it (evidence_ids, e.g. ["W1", "A2"]). Use only IDs that appear in the sources.
   Make each claim ONE atomic fact: if several facts have different figures or dates, write
-  several claims. Do not write citation markers like [W1] inside text. Do not put anything here that the
+  several claims. Be concise: give the facts that answer the question (for a statistic, the
+  latest value, the earlier value and the change), not a list of every data point. Do not write citation markers like [W1] inside text. Do not put anything here that the
   sources do not say; use exact figures from the sources.
 - inferences: your own reasoning or conclusions that go beyond the sources, one per item.
 - caveats: limits of the evidence (gaps, age of sources, what is missing).
@@ -121,8 +122,22 @@ def check_answer(answer: Answer, store: EvidenceStore) -> str | None:
     return "; ".join(lines) + f". Valid evidence IDs: {valid}"
 
 
+def _own_text_problem(text: str, evidence: str) -> str | None:
+    """A figure in the model's own words (an inference or caveat) must be in some source.
+
+    This is what stops a number from the model's memory, for example a current unemployment
+    rate, from reaching the reader as if it were retrieved. The model's own arithmetic is not
+    trusted either: a derived figure that no source states is flagged.
+    """
+    return figure_problem(text, evidence)
+
+
 def classify(answer: Answer, store: EvidenceStore) -> Synthesis:
-    """Split claims into sourced and unverified. Nothing is dropped."""
+    """Split claims into sourced and unverified. Nothing is dropped.
+
+    Inferences and caveats are the model's own words, but they are held to the same figure
+    check against all retrieved sources; one that fails is shown under Unverified, not hidden.
+    """
     sourced, unverified = [], []
     for claim in answer.claims:
         text = clean_text(claim.text)
@@ -131,12 +146,33 @@ def classify(answer: Answer, store: EvidenceStore) -> Synthesis:
             unverified.append(Unverified(text=text, reason=problem))
         else:
             sourced.append(Claim(text=text, evidence_ids=normalize_ids(claim.evidence_ids)))
+    evidence = _haystack(store, [eid for eid, _ in store.items()])
+
+    def own(texts: list[str], kind: str) -> list[str]:
+        kept = []
+        for t in texts:
+            t = clean_text(t)
+            problem = _own_text_problem(t, evidence)
+            if problem:
+                unverified.append(Unverified(text=t, reason=f"the model's own {kind}: {problem}"))
+            else:
+                kept.append(t)
+        return kept
+
+    refusal = clean_text(answer.refusal_reason)
+    if refusal and _own_text_problem(refusal, evidence):
+        unverified.append(
+            Unverified(
+                text=refusal, reason="a figure in the model's explanation is not in any source"
+            )
+        )
+        refusal = "The sources do not answer the question."
     return Synthesis(
         sourced=sourced,
+        inferences=own(answer.inferences, "inference"),
+        caveats=own(answer.caveats, "caveat"),
+        refusal_reason=refusal,
         unverified=unverified,
-        inferences=[clean_text(t) for t in answer.inferences],
-        caveats=[clean_text(t) for t in answer.caveats],
-        refusal_reason=clean_text(answer.refusal_reason),
     )
 
 

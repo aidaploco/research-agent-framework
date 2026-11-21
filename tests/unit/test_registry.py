@@ -36,11 +36,20 @@ def test_describe_lists_tools_and_options():
     assert "option flag (bool): a flag" in text
 
 
-def test_default_registry_has_wikipedia_and_arxiv():
-    assert default_registry().names() == ["wikipedia", "arxiv"]
+def test_default_registry_has_wikipedia_arxiv_and_fred():
+    assert default_registry().names() == ["wikipedia", "arxiv", "fred"]
 
 
 def test_each_tool_declares_a_distinct_id_prefix():
     reg = default_registry()
     prefixes = [reg.get(n).id_prefix for n in reg.names()]
-    assert prefixes == ["W", "A"]
+    assert prefixes == ["W", "A", "F"]
+
+
+def test_citation_does_not_repeat_an_id_the_title_already_has():
+    s = Source(
+        tool="fred", title="FRED: Unemployment Rate (UNRATE)", url="u", text="t", native_id="UNRATE"
+    )
+    assert s.citation() == "FRED: Unemployment Rate (UNRATE) - u"
+    s = Source(tool="arxiv", title="A paper", url="u", text="t", native_id="arXiv:1")
+    assert s.citation() == "A paper (arXiv:1) - u"

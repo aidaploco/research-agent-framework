@@ -4,8 +4,8 @@ A research agent for a banking team. It takes a natural-language question, plans
 tool to use, searches (Wikipedia, arXiv), and prints an answer in which every sourced
 claim carries a checked citation. It runs on free tiers only: no paid API keys.
 
-> **Status: work in progress.** Milestones M0 to M5 are implemented (see [PLAN.md](PLAN.md));
-> FRED, the 8 reference runs and the evaluation harness are next.
+> **Status: work in progress.** Milestones M0 to M6 are implemented (see [PLAN.md](PLAN.md));
+> the 8 reference runs and the evaluation harness are next.
 > Sections marked *TBD* are filled in as those land. This README is updated with each milestone.
 
 ## Setup and run
@@ -20,8 +20,9 @@ uv run python main.py "What is the Federal Reserve's discount window?"
 ```
 
 Get a free Groq key at <https://console.groq.com>. No payment details are needed.
-A FRED key (optional, for live economic data in a later milestone) is free at
-<https://fred.stlouisfed.org/docs/api/api_key.html>.
+A FRED key (optional, but needed for current economic data such as the unemployment rate) is
+free at <https://fred.stlouisfed.org/docs/api/api_key.html>; put it in `.env` as `FRED_API_KEY`.
+Without it the agent still runs, and says plainly that live data could not be retrieved.
 
 By default the agent may make up to 3 searches, one tool at a time, refining as it goes. For
 one search and then an answer, add `--single-pass` (or set the cap with `--max-steps N`):
@@ -66,13 +67,15 @@ Put the question in quotes. The agent works out which source suits it:
 |---|---|---|
 | Definitions, how a mechanism works, history | Wikipedia | *What is the Federal Reserve's discount window and how does it work?* |
 | Research literature, "recent papers" | arXiv | *What recent academic research exists on using machine learning for credit risk assessment?* |
+| Current or recent economic statistics | FRED (needs a free key) | *What is the current US unemployment rate and how has it changed over the past year?* |
 | Nothing it can help with | refused, with no search and no model call | *What is the best restaurant in New York City?* |
 
 A question that needs two sources (for example *"explain yield curve inversions and find recent
 papers"*) is answered in steps: the agent searches one tool, looks at what came back, and
 searches the next, up to 3 searches. If a search finds nothing or the wrong thing it changes the
-query instead of giving up. Add `--single-pass` for one search only. There is no FRED tool yet,
-so questions about current economic data cannot be answered from live data.
+query instead of giving up. Add `--single-pass` for one search only. Questions about current
+economic data go to FRED; without a FRED key the agent says live data could not be retrieved and
+states no current figure (see *FRED: current data, and what happens without a key*).
 
 ### Read the answer
 
@@ -101,7 +104,8 @@ The answer goes to stdout; the plan and the trace path go to stderr. An abridged
 - **Unverified** (only when present): statements the model made that failed the checks, kept
   visible and labelled with the reason, never silently dropped. Do not rely on them.
 - **Notices** (only when present): written by code, for example that a tool was unavailable
-  and another one answered in its place.
+  and another one answered in its place, or that no current figure is available because the live
+  data source could not be reached.
 - **Gaps:** the sources answered part of the question, and this says what is missing.
 - **Cannot answer from sources:** the sources did not answer the question, or it was out of
   scope. The agent says so instead of guessing.
@@ -120,7 +124,7 @@ Set these in `.env` (copy `.env.example`) or in the environment.
 | `GROQ_API_KEY` | yes | Free key from <https://console.groq.com>. |
 | `LLM_MODEL` | no | Groq model id; default `openai/gpt-oss-120b`. Only the default has been tested. The model must support JSON-schema output. |
 | `TRACE_DIR` | no | Where traces and the index are written; default `.traces`. |
-| `FRED_API_KEY` | no | Reserved for the FRED tool in a later milestone; not used yet. |
+| `FRED_API_KEY` | no | Free key for the FRED tool (current economic data). Without it FRED reports that live data cannot be retrieved. The key is sent only to FRED and never appears in errors, notices or traces. |
 
 ### Troubleshooting
 
@@ -128,6 +132,9 @@ Set these in `.env` (copy `.env.example`) or in the environment.
 - **`error: Groq API error 429`:** the free tier's rate limit (about 8,000 tokens per minute for
   the default model). The client already retries with the `Retry-After` the API gives; wait a
   minute and run again. Running several questions back to back can trigger it.
+- **A notice says FRED is unavailable and no current figure is stated:** `FRED_API_KEY` is not set
+  (or FRED could not be reached). Add the key to `.env`; until then the agent will not state a
+  current value, by design.
 - **A "Notices" section says arXiv was unavailable:** arXiv rate-limits and sometimes times
   out. The agent retried three times with short backoff, then tried Wikipedia; the notice says
   which sources the answer used. Run it again later for paper results.
@@ -148,6 +155,8 @@ Set these in `.env` (copy `.env.example`) or in the environment.
    option). Implement `run(query, **options) -> list[Source]`, raising `ToolError` on failure.
 2. Register it in `default_registry()` in `tools/registry.py`.
 3. Test it with `FakeHTTPResponse` and `FakeTool` from `tests/fakes.py`.
+4. If it returns *current* figures, set `live_data = True` on the class: when it is unavailable the
+   agent then adds the "no current figure" notice automatically.
 
 Nothing else changes: the planner prompt is generated from the registry, evidence IDs and
 citations come from the prefix, and failures flow through the same retry, fallback and notice
@@ -169,7 +178,8 @@ src/research_agent/
   tools/
     base.py                  Tool interface, Source model, options models
     registry.py              the one place tools are registered and described
-    wikipedia.py  arxiv.py   the two tools
+    wikipedia.py  arxiv.py   Wikipedia and arXiv
+    fred.py                  FRED: current and historical US economic statistics
 ```
 
 **Tools are plug-ins.** Each tool subclasses `Tool`: a `name`, an `id_prefix`, a one-line
@@ -206,7 +216,11 @@ is validated again by Pydantic. Code then:
 3. on a failure, shows the model exactly what was wrong and lets it repair **once**;
 4. **demotes** any claim that still fails to an **Unverified** section, and labels it
    with the reason;
-5. writes the `[W1][A2]` markers itself and strips any marker the model wrote.
+5. writes the `[W1][A2]` markers itself and strips any marker the model wrote;
+6. holds the model's **own words** (inferences, caveats, a refusal explanation) to the same figure
+   check against all retrieved sources. A figure that no source states, for example a rate
+   remembered from training, is shown under *Unverified*, never as inference. The model's own
+   arithmetic is not trusted either: a derived figure that no source states is flagged.
 
 The output has separate sections: *Notices* (written by code: tool failures and
 substitutions), *From sources* (validated claims with citations),
@@ -309,7 +323,11 @@ For every figure in a claim, code looks for it in the cited sources in two steps
   a source's "3 percent" next to "leverage ratio" does not ground a claim about a dividend
   cap. A number alone on its own line, as in lists, is described by the lead-in before it.
 
-Single-digit plain integers are not checked, and plain years only need to be present.
+Single-digit plain integers are not checked, and plain years only need to be present (a year
+also matches the ISO dates it is part of, so "2026" is found in `2026-10-01`). When the clause
+around a number has little context, the words of its whole sentence are used, so a subject stated
+earlier ("the unemployment rate has fallen, moving from 4.4% to 4.1%") still counts. Month names
+and identifiers such as `COVID-19` or `U-3` are not treated as keywords or quantities.
 The check is keyword proximity, not understanding; see Limitations. The model is also asked
 to write one atomic fact per claim, which makes the check sharper.
 
@@ -396,6 +414,34 @@ Three things follow in the code:
 - **`Retry-After` is capped at 30 seconds.** If the API asks for longer (a daily quota, not a
   per-minute limit) the client stops with a clear error instead of sleeping for hours.
 
+### FRED: current data, and what happens without a key
+
+FRED is the source of *current* statistics, so the rule for it is strict: **a current figure either
+comes from FRED or is not stated.** (The endpoints and the 13 series IDs in the planner's catalog
+were checked against the live API.)
+
+- **What it returns:** one source per call: the series title, units, frequency and last-updated
+  date, the latest value, the value about a year earlier, and the change, which is **computed in
+  code**, not by the model, so the grounding check can verify it. Daily series are summarized
+  (the latest five observations), and FRED's `.` marker for a missing value is skipped.
+- **Without a key** the tool fails at once, with no network call, saying live data cannot be
+  retrieved. The loop treats that like any failed tool, so the planner can turn to Wikipedia. The
+  code (not the model) then adds a notice: *no current figure from fred is available, so none is
+  stated here; anything below from other sources is general background that may be out of date.*
+  The model is also told not to state any value for any date and to give only definitions and
+  methods; that steer is best effort (see Limitations), but the notice and the checks below are not.
+- **No figure from memory:** every figure the model states must be in a retrieved source: in a
+  claim (checked against its citations) and in its own inferences and caveats (checked against
+  all sources). The model's remembered "current rate" therefore lands under *Unverified*.
+- **The API key is protected.** FRED takes the key as a URL parameter, and a `requests` error
+  message contains the URL. No error, notice or trace is built from exception text (only the
+  exception's type name or FRED's own `error_message`), and tests check that a key never reaches
+  an error, a trace or a notice.
+
+Q5 both ways is in [`outputs/`](outputs/): [with a key](outputs/q5-with-fred-key.md) (4.1% in
+October 2026, down 0.3 points from a year earlier, from the FRED series page) and
+[without a key](outputs/q5-without-fred-key.md).
+
 ### Wikipedia: exact title first
 
 Wikipedia's full-text search ranks an article titled exactly "Basel III" below pages that
@@ -434,6 +480,17 @@ body, not a 429, and it occasionally times out; Wikipedia returns 429 under burs
 ## Agent performance summary
 
 *TBD (M7 runs the 8 reference questions; M8 adds the evaluation harness).*
+
+### Q5, the unemployment rate, both ways (M6, live, one run each)
+
+| | Result |
+|---|---|
+| With a FRED key | Planned FRED, then finished after one search. Two sourced claims: 4.1% in October 2026, and a 0.3-point fall from 4.4% a year earlier, both cited to the FRED series. No demotions. |
+| Without a key | FRED failed instantly; notice: no current figure available, none stated. Planned Wikipedia and finished. A "Gaps" section says the current rate and its change are not in the sources. Three sourced claims about dated historical rates (2017, 2019, 2020) and **no current rate**. The model's caveat about "the current (2026) rate" was caught as its own words and shown under Unverified. |
+
+Along the way the free-text check wrongly demoted correct statements three times (a subject in the
+previous clause, month names that do not match ISO dates, a year that only appears inside an ISO
+date) and once treated the `19` in `COVID-19` as a quantity; each is fixed and is a regression test.
 
 ### Single-pass vs multi-step (M5, live, one run each: not a benchmark)
 
@@ -510,7 +567,16 @@ Known at this milestone:
   deep in a long article can be missed.
 - arXiv is slow and sometimes unavailable. The fallback tool may not be a good substitute
   (Wikipedia is not a substitute for papers); the notice says so, but the answer is weaker.
-- No FRED tool yet, so current economic data can't be retrieved.
+- **FRED:** the planner picks a series from a short catalog in the tool's description, or the tool
+  searches FRED by keyword and takes the most popular match (it names the other candidates, and
+  a wrong pick can be refined on the next step). "A year earlier" is the nearest observation within
+  70 days, so around a gap in the data (FRED has no October 2025 unemployment figure) the dates
+  differ from exactly one year; the dates are always stated.
+- **Without a FRED key, the model may still list dated historical figures** from Wikipedia despite
+  being told to give only definitions. They are sourced, dated and covered by the notice that
+  anything below may be out of date, but they are not the "how the rate is measured" background
+  that was asked for. What is guaranteed is that no current rate appears and no figure comes from
+  the model's memory; the steer toward definitions only is best effort.
 - Results above are single live runs on one day; the planner and the sources vary from run to run.
 - No evaluation harness yet.
 

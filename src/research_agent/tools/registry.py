@@ -2,6 +2,7 @@
 
 from .arxiv import ArxivTool
 from .base import Tool
+from .fred import FredTool
 from .wikipedia import WikipediaTool
 
 
@@ -36,4 +37,4 @@ class Registry:
 
 
 def default_registry() -> Registry:
-    return Registry([WikipediaTool(), ArxivTool()])
+    return Registry([WikipediaTool(), ArxivTool(), FredTool()])

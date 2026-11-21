@@ -1,0 +1,7 @@
+# Gitleaks false positives. Each line is a finding's fingerprint (commit:file:rule:line).
+#
+# A made-up sentinel API key used by the "the key never leaks" test in tests/unit/test_fred.py.
+# It was never a real credential (the real keys were checked: they appear nowhere in the
+# repository or its history). The test now uses an obviously fake, low-entropy value; this entry
+# covers the earlier commit that is still in history.
+69da47b8c8d82c7bff1f30242b0819b990b138ac:tests/unit/test_fred.py:generic-api-key:14

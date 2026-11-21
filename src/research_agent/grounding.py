@@ -55,7 +55,7 @@ _SCALES = "|".join(SCALES)
 FIGURE = re.compile(
     rf"""
     (?P<date>\d{{4}}-\d{{2}}-\d{{2}})
-  | (?<![A-Za-z\d.])(?:[$€£]\s?)?(?P<num>\d[\d,\u00a0\u202f]*(?:\.\d+)?)
+  | (?<![A-Za-z\d.])(?<![A-Za-z]-)(?:[$€£]\s?)?(?P<num>\d[\d,\u00a0\u202f]*(?:\.\d+)?)
         (?:\s*(?P<scale>{_SCALES})\b)?
         (?:\s*(?P<unit>%|percentage\spoints?\b|percent\b|per\scent\b|basis\spoints?\b|bps\b|bp\b))?
   | \b(?P<word>{_WORDS})\b(?:\s*(?P<wunit>%|percent\b|per\scent\b|basis\spoints?\b))?
@@ -70,6 +70,7 @@ STOPWORDS = set(
     until very were what when where which while will with within would approximately roughly
     nearly almost least minimum maximum average typically usually generally several many
     percent billion million thousand trillion basis points point cent percentage
+    january february march april june july august september october november december
     """.split()
 )
 KEYWORD = re.compile(r"[a-z][a-z0-9\-]{3,}")  # 4+ characters, starts with a letter
@@ -101,6 +102,8 @@ class Figure:
         )
 
     def matches(self, other: "Figure") -> bool:
+        if self.is_year() and isinstance(other.value, str):  # "2026" is in "2026-10-01"
+            return other.value.startswith(f"{int(self.value)}-")
         if isinstance(self.value, str) or isinstance(other.value, str):
             return self.value == other.value
         if self.value != other.value:
@@ -198,17 +201,22 @@ def figure_problem(claim_text: str, haystack: str) -> str | None:
         if not fig.checkable():
             continue
         local = window_around(claim_text, fig.start, fig.end, CLAIM_WINDOW, CLAUSE_END)
-        wanted = keyword_map(local) or claim_all
+        wanted = keyword_map(local)
+        if len(wanted) < 2:  # too little context in the clause: the subject is in the sentence
+            sentence = window_around(
+                claim_text, fig.start, fig.end, 4 * CLAIM_WINDOW, SENTENCE_ONLY
+            )
+            wanted = keyword_map(sentence) or claim_all
         found = [g for g in source_figures if fig.matches(g)]
         if not found:
-            problems.append(f"figure {fig.text.strip()!r} does not appear in the cited sources")
+            problems.append(f"figure {fig.text.strip()!r} does not appear in the sources")
             continue
         if not wanted or fig.is_year():
             continue  # nothing to anchor on, or a year: presence in the sources is enough
         near = any(set(wanted) & keywords(source_context(haystack, g)) for g in found)
         if not near:
             problems.append(
-                f"figure {fig.text.strip()!r} appears in the cited sources but not near "
+                f"figure {fig.text.strip()!r} appears in the sources but not near "
                 f"any of its context words {sorted(wanted.values())[:6]}"
             )
     return "; ".join(problems) or None
