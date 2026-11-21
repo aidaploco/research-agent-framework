@@ -206,3 +206,116 @@ I'm waiting on your answers to the earlier decisions before M1: LLM backend, Tie
 ## [2026-11-20 18:25:42] Prompt
 
 create a public remote repo and push what we have so far. then set up branch protection to prevent direct pushes to main
+
+## [2026-11-20 18:26:30] Response
+
+The repo is public and `main` is protected. I tested it with a direct push, and GitHub rejected it.
+
+**Repo:** https://github.com/aidaploco/research-agent-framework, under your `aidaploco` account, which matches your git author. It has two commits, the M0 setup and a prompt-log update. That update holds the first live-captured response entries, so the response hook is working.
+
+**Branch protection on `main`:**
+- Changes have to go through a pull request.
+- It needs 0 approvals, since you can't approve your own PRs as a solo developer.
+- Admins are included in the rule, so you can't bypass it either.
+- Force pushes and branch deletion are blocked.
+
+**Test:** I made an empty commit and pushed it to `main`. GitHub rejected it with "Changes must be made through a pull request." I then removed that commit locally, so local and remote match.
+
+**What this changes:**
+- Each milestone now goes on a feature branch and gets merged by PR.
+- I'll push those branches and open PRs only when you say so in that turn.
+- If you'd rather keep a bypass for yourself, I can turn off the admin enforcement. I left it on because "prevent direct pushes" read as applying to everyone.
+- I didn't add required signed commits or required status checks. Say if you want either.
+- The public repo contains `prompt-log.md`, which includes the spec you pasted.
+
+I'm still waiting on your answers about the LLM backend, the Tier 3 item and the FRED-key fallback before starting M1.
+
+---
+
+## [2026-11-20 18:40:22] Prompt
+
+I've created an API key with Groq, it's in the .env file. For some reason I couldn't make an API key with Google AI studio. I chose for the free cloud tier because it's fast and reasons better than a small local model. The trade-off is that cloud needs a free sign up and has rate limits, whereas local needs no signup but is slow on CPU. I believe the spec said we need to explain the tradeoffs in the README file.
+
+For tier 3, yes go with the eval harness
+
+yes regarding the FRED key create a fallback but say you can't retrieve live unemployment data without the fred key, don't guess numbers. you can offer background from wikipedia on how the rate is measured, but label it as general context that may be out of date. never state a current rate from the model's memory.
+
+---
+
+## [2026-11-20 18:47:26] Prompt
+
+make sure to use uv and create a proper folder layout. you can take a look at agent-chassis in the parent folder as an example. also take a look at how the ci pipelines and evals are set up there. but before adopting anything blindly, assess based on the spec and the plan.md what makes sense to adopt. don't make any code changes yet, just report back with what you'd change to this repo.
+
+## [2026-11-20 18:48:07] Response
+
+I made no changes. I read agent-chassis's `pyproject.toml`, `ci.yml`, `evals.yml`, its eval package and cases, and its layout. I judged each piece against the spec and `PLAN.md`.
+
+## Adopt as is
+- **uv with a committed `uv.lock`**, `uv sync --frozen` in CI, and a `[dependency-groups] dev`. This also makes the reviewer's setup `uv sync`, then `uv run`.
+- **`src/` layout, `tests/unit` plus `tests/fixtures`, and a `tests/README.md`** that says what each part covers.
+- **Ruff, format and lint, as a CI gate.**
+- **`ci-success` as the only required check.** It fails closed on skipped jobs, which is the useful part. I'd add it to branch protection once the first CI run makes it appear.
+- **Fork-PR skip and pinned action SHAs.** The repo is public and will hold a Groq secret.
+- **Gitleaks over full history.** It's cheap and fits a public repo with a `.env`. My checks show the key isn't in git, but I'd want CI to enforce that.
+- **Dependabot, weekly and grouped.** It costs almost nothing.
+
+## Adapt
+- **Python floor:** agent-chassis pins 3.15. A reviewer's machine may not have it, and the spec stresses reproducibility. I'd use `requires-python >=3.11`, with a `.python-version` that uv can fetch. The README will state it.
+- **Evals:** they should be CI-visible, but not a PR gate.
+  - **Two tiers:** offline evals and live evals.
+    - Offline evals use recorded tool results and a stubbed LLM. They test the graders, routing and refusal logic, and run free in CI.
+    - Live evals call Groq. They run nightly and on `workflow_dispatch`, advisory only, as chassis does.
+  - **Repeat and pass rate:** chassis's idea of repeat runs with a required pass rate fits probabilistic models. I'd keep it, but default to 1 repeat because of Groq's 8,000 tokens/min limit. The harness needs throttling, serial runs and retry on 429.
+  - **Case schema:** chassis's YAML is about routing and guardrails. The spec asks for different fields, so mine would be:
+    - `id`, `type`, `question`
+    - `expected_sources`
+    - `must_include`, `must_not_include`
+    - `should_refuse`
+  - **Graders:** chassis relies on an LLM judge. The spec wants relevance, attribution accuracy and refusal measured. I'd make attribution deterministic: every cited URL or ID must appear in that run's trace of tool outputs. Refusal and must/must-not facts are cheap string checks. The LLM judge scores relevance only.
+  - **Reference questions:** the 8 reference questions become cases in the 15 or more benchmark.
+  - **Trace link:** the harness should read the trace store, so tracing (O1–O4) and evals share one data source.
+- **Entry point:** the spec requires `python agent.py "..."`. I'd keep a thin root `agent.py` that calls `research_agent.cli`, and add a `[project.scripts]` entry. Both work under `uv run`.
+
+## Skip
+- **Infrastructure and app code:** Docker, compose, Temporal, Postgres and pgvector, FastAPI, the Next.js console, and pydantic-ai. They add reproducibility cost and nothing the spec asks for.
+- **Process files:** import-linter, `DESIGN.md`, `CHANGELOG.md`, `PATCHES.md` and release automation. The README's design-decisions section covers what's needed.
+- **Pyright:** optional. I'd leave it out for now and say so.
+- **Coverage gate:** a gate of 80 would need tests for glue code. I'd report coverage without gating, or gate lower.
+
+## Proposed layout
+```
+pyproject.toml  uv.lock  .python-version  .env.example
+agent.py                      # thin shim: python agent.py "q"
+src/research_agent/
+  cli.py  agent.py  llm.py  state.py  tracing.py
+  tools/  base.py  registry.py  wikipedia.py  arxiv.py  fred.py
+  evals/  schema.py  runner.py  graders.py
+evals/cases.yaml
+tests/unit/  tests/fixtures/  tests/README.md
+outputs/  q1.md … q8.md  traces/   # committed deliverables
+.github/workflows/ci.yml  evals.yml  dependabot.yml
+```
+Runtime traces would go to a gitignored `.traces/`. The committed ones for the 8 questions go in `outputs/traces/`.
+
+## What changes in this repo
+- **M1 code:** move `research_agent/` into `src/research_agent/`. Delete `requirements.txt` and the pip-made `.venv`. Add `pyproject.toml` and `uv.lock`. The Wikipedia tool and Groq client stay as they are.
+- **PLAN.md:** record your decisions.
+  - Groq is the backend. The model is `openai/gpt-oss-120b`. The 8,000 tokens/min limit I measured goes into the README tradeoffs.
+  - The Tier 3 item is the evaluation harness.
+  - FRED fallback rule: with no key, say live unemployment data can't be retrieved and give no numbers. Wikipedia may add background on how the rate is measured, labelled general context that may be out of date. A current rate is never stated from model memory. I'd add a post-check so no unsupported number reaches Q5's output.
+  - Milestones are reordered so uv and CI setup come right after M1.
+- **Commits:** M1 stays uncommitted on `m1-thin-slice`. I'd commit the uv restructure and M1 together on that branch, then open a PR only when you say so.
+
+## Two findings from the M1 run
+- **Retrieval:** with the LLM query rewrite, Q1 retrieved the Discount window article and answered correctly. The Q7 restaurant question got a cautious answer, but it still ran a search first. A scope check before retrieval is still needed.
+- **Citation format:** the model sometimes emits its own citation markers like `【1†L1-L4】` instead of `[1]`. The attribution grader needs a normalizer, or the prompt needs tightening.
+
+## Questions
+1. Is a Python floor of 3.11 acceptable?
+2. Should the offline eval tier gate PRs through `ci-success`, with the live tier advisory only?
+
+---
+
+## [2026-11-20 18:51:52] Prompt
+
+for now only do the adopt as is part and set requires-python to >= 3.11. do this in the same branch as you did the M1 work. we'll leave the other adapt parts for later, as we progress with the milestones.
