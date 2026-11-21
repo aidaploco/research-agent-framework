@@ -131,3 +131,11 @@ def test_invalid_output_with_every_tool_failed_finishes(fake_llm):
     fake_llm.always("garbage")
     plan = make_plan("q", REG, PlanState(failed_tools={"wikipedia", "arxiv"}))
     assert plan.action == "finish" and "no tool is available" in plan.reasoning
+
+
+def test_the_prompt_tells_the_model_to_change_a_failed_query_and_to_finish_when_covered(fake_llm):
+    fake_llm.queue(plan_json())
+    make_plan("q", REG)
+    system = fake_llm.calls[0]["messages"][0]["content"]
+    assert "Repeating a query returns the same thing" in system
+    assert "Choose finish as soon as the evidence covers" in system

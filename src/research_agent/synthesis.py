@@ -27,8 +27,10 @@ Return JSON with:
   sources do not say; use exact figures from the sources.
 - inferences: your own reasoning or conclusions that go beyond the sources, one per item.
 - caveats: limits of the evidence (gaps, age of sources, what is missing).
-- refusal_reason: "" normally. If the sources do not answer the question, set it to a short
-  explanation and return no claims. Never invent facts, figures or sources."""
+- refusal_reason: "" when the sources answer the whole question. If they answer only PART of it
+  (for example one half of a comparison), still return the claims they support and use
+  refusal_reason to say plainly what is missing. If nothing relevant is in the sources, return
+  no claims and explain why. Never invent facts, figures or sources."""
 
 MARKER = re.compile(r"【[^】]*】|\[[A-Z]\d+\]")
 

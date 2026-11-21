@@ -30,7 +30,9 @@ You may make at most {steps_left} more search(es). Choose the next action:
 Reply with a JSON object: action, reasoning (one sentence: why), tool, query, options (an object; {{}} if none).
 Write queries as short keywords, not full sentences. For wikipedia, name the article you expect
 (for example "Basel III" or "Discount window"), not a description of the topic.
-If an earlier search found nothing or the wrong thing, refine it: different words, or a different tool.
+If an earlier search found nothing or the wrong thing, change it: different words, a different article
+title, or a different tool. Repeating a query returns the same thing.
+Choose finish as soon as the evidence covers what the question asks; do not search just to confirm.
 If the question needs more than one kind of source (for example a definition and recent papers), use a different tool for each.
 Never repeat a search that is already listed."""
 

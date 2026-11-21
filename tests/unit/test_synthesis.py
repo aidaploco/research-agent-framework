@@ -176,3 +176,14 @@ def test_spelled_out_numbers_in_sources_match_digits_in_claims():
     )
     result = classify(answer(("Terms rose to 30 days and then 90 days.", ["W1"])), store)
     assert len(result.sourced) == 1 and not result.unverified
+
+
+def test_render_partial_answer_shows_the_claims_and_the_gap():
+    result = Synthesis(
+        sourced=[Claim(text="In 2008 the Fed cut rates.", evidence_ids=["W1"])],
+        refusal_reason="The sources do not cover the Fed's COVID-19 response.",
+    )
+    out = render(result, make_store())
+    assert "- In 2008 the Fed cut rates. [W1]" in out
+    assert "## Gaps\nThe sources do not cover the Fed's COVID-19 response." in out
+    assert "## Cannot answer from sources" not in out
