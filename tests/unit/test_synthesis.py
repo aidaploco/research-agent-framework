@@ -1,4 +1,3 @@
-from research_agent import synthesis
 from research_agent.evidence import EvidenceStore
 from research_agent.synthesis import (
     Answer,
@@ -90,6 +89,11 @@ def test_figure_not_in_cited_source_is_demoted():
     assert "77" in result.unverified[0].reason
 
 
+def test_figure_near_the_wrong_words_is_demoted():
+    result = classify(answer(("Dividends were capped at 100 basis points.", ["W1"])), make_store())
+    assert "not near" in result.unverified[0].reason
+
+
 def test_figures_in_source_pass_including_commas_dates_and_ids():
     ok = answer(
         ("Borrowing reached $46 billion across 1200 loans.", ["W1"]),
@@ -155,10 +159,6 @@ def test_render_refusal_without_sources():
     assert "## Cannot answer from sources\nOut of scope." in out
     assert "## Sources\n(none)" in out
     assert "## From sources" not in out
-
-
-def test_figure_extraction_ignores_small_numbers():
-    assert synthesis._figures("3 of 100 banks, 5%, 2.5 and 1,200") == ["100", "5", "2.5", "1200"]
 
 
 def test_spelled_out_numbers_in_sources_match_digits_in_claims():

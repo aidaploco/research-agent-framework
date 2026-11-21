@@ -14,13 +14,15 @@ from pydantic import BaseModel, ConfigDict
 
 from . import llm
 from .evidence import EvidenceStore
+from .grounding import figure_problem
 
 SYSTEM = """You are a careful research assistant for a bank's research team.
 Answer the question using ONLY the sources provided. Each source has an evidence ID like [W1] or [A2].
 Return JSON with:
 - claims: each claim is one statement taken from the sources (text) and the evidence IDs that
   directly support it (evidence_ids, e.g. ["W1", "A2"]). Use only IDs that appear in the sources.
-  Do not write citation markers like [W1] inside text. Do not put anything here that the
+  Make each claim ONE atomic fact: if several facts have different figures or dates, write
+  several claims. Do not write citation markers like [W1] inside text. Do not put anything here that the
   sources do not say; use exact figures from the sources.
 - inferences: your own reasoning or conclusions that go beyond the sources, one per item.
 - caveats: limits of the evidence (gaps, age of sources, what is missing).
@@ -28,7 +30,6 @@ Return JSON with:
   explanation and return no claims. Never invent facts, figures or sources."""
 
 MARKER = re.compile(r"【[^】]*】|\[[A-Z]\d+\]")
-FIGURE = re.compile(r"\d[\d,]*(?:\.\d+)?%?")
 
 
 class Claim(BaseModel):
@@ -80,35 +81,16 @@ def clean_text(text: str) -> str:
     return re.sub(r"\s+", " ", MARKER.sub("", text)).strip()
 
 
-NUMBER_WORDS = {
-    **{w: str(n) for n, w in enumerate(
-        "one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
-        "fifteen sixteen seventeen eighteen nineteen twenty".split(), 1)},
-    "thirty": "30", "forty": "40", "fifty": "50", "sixty": "60", "seventy": "70",
-    "eighty": "80", "ninety": "90", "hundred": "100",
-}  # fmt: skip
-
-
-def _figures(text: str) -> list[str]:
-    """Numbers worth checking: two or more digits, or decimals and percentages."""
-    found = []
-    for m in FIGURE.findall(text):
-        num = m.rstrip("%").replace(",", "")
-        if len(num.replace(".", "")) >= 2 or "." in num or m.endswith("%"):
-            found.append(num)
-    return found
-
-
 def _haystack(store: EvidenceStore, ids: list[str]) -> str:
+    """The text a claim may be checked against: title, body, the source's own ID, and date."""
     parts = []
     for eid in ids:
         s = store.get(eid)
         if s:
-            parts += [s.title, s.text, s.native_id, str(s.meta.get("published", ""))]
-    text = " ".join(parts)
-    # Sources often spell numbers out ("thirty days"); add the digits so "30" is found.
-    words = [NUMBER_WORDS[w] for w in re.findall(r"[a-z]+", text.lower()) if w in NUMBER_WORDS]
-    return (text + " " + " ".join(words)).replace(",", "")
+            parts += [s.title, s.text, s.native_id]
+            if s.meta.get("published"):
+                parts.append(f"published {s.meta['published']}")
+    return "\n".join(parts)
 
 
 def claim_problem(claim: Claim, store: EvidenceStore) -> str | None:
@@ -119,13 +101,7 @@ def claim_problem(claim: Claim, store: EvidenceStore) -> str | None:
     unknown = [i for i in ids if store.get(i) is None]
     if unknown:
         return f"cites unknown evidence IDs {unknown}"
-    hay = _haystack(store, ids)
-    missing = [
-        f for f in _figures(claim.text) if not re.search(rf"(?<![\d.]){re.escape(f)}(?!\d)", hay)
-    ]
-    if missing:
-        return f"figures {missing} do not appear in the cited sources"
-    return None
+    return figure_problem(claim.text, _haystack(store, ids))
 
 
 def check_answer(answer: Answer, store: EvidenceStore) -> str | None:
